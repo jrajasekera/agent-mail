@@ -53,6 +53,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_read.add_argument("id", type=int)
     p_wait = sub.add_parser("wait")
     p_wait.add_argument("--timeout", type=float, default=None)
+    p_hook = sub.add_parser("hook")
+    p_hook.add_argument("harness")
+    p_hook.add_argument("event")
     return parser
 
 
@@ -60,6 +63,21 @@ def main(argv: list[str] | None = None,
          env: Mapping[str, str] | None = None) -> int:
     env = dict(os.environ if env is None else env)
     args = build_parser().parse_args(argv)
+    if args.command == "hook":
+        from amail import hooks
+        try:
+            stdin_text = sys.stdin.read() if not sys.stdin.closed else ""
+        except (OSError, ValueError):
+            stdin_text = ""
+        try:
+            code, out = hooks.run_hook(args.harness, args.event, env,
+                                       stdin_text)
+            if out:
+                print(out)
+            return code
+        except Exception as e:
+            hooks.log_failure(env, e)
+            return 0
     home = db.amail_home(env)
     conn = db.connect(home)
     try:
