@@ -35,6 +35,11 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("register")
     sub.add_parser("whoami")
+    p_status = sub.add_parser("status")
+    p_status.add_argument("--status", choices=["working", "idle", "waiting"])
+    p_status.add_argument("--task")
+    p_roster = sub.add_parser("roster")
+    p_roster.add_argument("--all", action="store_true")
     return parser
 
 
@@ -63,5 +68,28 @@ def dispatch(args, conn, env, home) -> int:
         print(json.dumps(_agent_dict(agent)) if args.json
               else f"{registry.handle(agent)}  {agent.harness}"
                    f"  {agent.status}  {agent.cwd or ''}")
+        return 0
+    if args.command == "status":
+        agent = _require_agent(conn, env)
+        if agent is None:
+            return 1
+        u = registry.update_status(conn, agent, args.status, args.task)
+        print(json.dumps(_agent_dict(u)) if args.json
+              else f"{registry.handle(u)}: {u.status}"
+                   f"{' — ' + u.task if u.task else ''}")
+        return 0
+    if args.command == "roster":
+        agents = registry.roster(conn, home, include_offline=args.all)
+        if args.json:
+            print(json.dumps([_agent_dict(a) for a in agents]))
+        else:
+            home_dir = env.get("HOME", "")
+            for a in agents:
+                cwd = a.cwd or "-"
+                if home_dir:
+                    cwd = cwd.replace(home_dir, "~", 1)
+                print(f"{registry.handle(a):<16} {a.harness:<7} "
+                      f"{a.status:<8} {cwd:<32} {(a.branch or '-'):<18} "
+                      f"{(a.task or '-'):<28} {a.last_seen}")
         return 0
     return 1

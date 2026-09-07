@@ -127,5 +127,36 @@ def current_agent(conn: sqlite3.Connection,
     return _row_to_agent(native_row) if native_row else None
 
 
+def update_status(conn: sqlite3.Connection, agent: Agent,
+                  status: str | None = None, task: str | None = None) -> Agent:
+    cwd = os.getcwd()
+    branch = detect_branch(cwd)
+    conn.execute(
+        "UPDATE agents SET status = COALESCE(?, status),"
+        " task = COALESCE(?, task), cwd = ?, branch = ?, last_seen = ?"
+        " WHERE id = ?",
+        (status, task, cwd, branch, _now(), agent.id))
+    return get(conn, agent.id)
+
+
 def reap(conn: sqlite3.Connection, home: Path | None = None) -> int:
-    return 0
+    reaped = 0
+    for row in conn.execute(
+            "SELECT id, pid, pid_start FROM agents WHERE status != 'offline'"):
+        if not identity.pid_alive(row["pid"], row["pid_start"]):
+            conn.execute("UPDATE agents SET status='offline' WHERE id=?",
+                         (row["id"],))
+            reaped += 1
+            if home is not None:
+                (home / "doorbells" / str(row["id"])).unlink(missing_ok=True)
+                (home / "waiters" / f"{row['id']}.pid").unlink(missing_ok=True)
+    return reaped
+
+
+def roster(conn: sqlite3.Connection, home: Path | None = None,
+           include_offline: bool = False) -> list[Agent]:
+    reap(conn, home)
+    where = "" if include_offline else "WHERE status != 'offline'"
+    return [_row_to_agent(r) for r in conn.execute(
+        f"SELECT * FROM agents {where}"
+        " ORDER BY (status = 'offline'), name")]
