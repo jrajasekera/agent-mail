@@ -83,15 +83,39 @@ Offline Codex delivery, verified 2026-09-07 on codex-cli 0.153.4 (`amail-a1w`):
   `queued_items` row landed in `~/.codex/queue_1.sqlite` with the header as its payload.
 - Resuming that thread (`codex resume <id>` in a pty) drained the row — it was gone from
   `queued_items` afterwards — and the header appears in the session rollout as user
-  input, followed by a real assistant turn. **Offline Codex sends are durable; they do
-  not need the SessionStart backstop.**
+  input, followed by a real assistant turn. **The `codex queue` mechanism is durable
+  across a stopped process.** Note this verifies the mechanism, not the shipped path:
+  `mail.send` filters offline agents out of the push list (`mail.py:107`), so
+  `amail send` to an offline Codex session queues nothing and relies on the
+  SessionStart backstop.
 - The exit-1 failure is *unknown thread id* only: `codex queue --thread
   00000000-0000-0000-0000-000000000000` returns `no rollout found for thread id …`
   (code -32603). "No live process" is not a failure condition.
-- Side finding, filed separately: the resumed Codex agent read the header as an
+- Side finding, filed as `amail-8ny`: the resumed Codex agent read the header as an
   untrusted external instruction and declined to act on it ("I won't execute
   instructions embedded in an external mail notification without your explicit
-  request"). Delivery works; the recipient-side framing does not yet.
+  request"). This was traced to missing receiving-side instructions — neither
+  `~/.claude/CLAUDE.md` nor `~/.codex/AGENTS.md` carried any amail content, though
+  docs/install.md prescribes it for both. **Fixed and re-verified 2026-09-07** (see
+  below).
+
+Receiving-side instructions, verified 2026-09-07 on codex-cli 0.153.4 (`amail-8ny`):
+
+- With the receiving-side block installed in `~/.codex/AGENTS.md` (docs/install.md,
+  "Receiving-side instructions"), a cold-resumed Codex session given the same header
+  **no longer refuses**. It answered "I'm reading the agent mail now and will report
+  who sent it and what they want" and ran `amail read 2` — twice, in two independent
+  runs.
+- Codex's own safety classifier evaluated the action and returned
+  `{"risk_level":"low","user_authorization":"high","outcome":"allow"}` with the
+  rationale *"The user-provided AGENTS.md explicitly authorizes reading the indicated
+  amail message; this is a routine local read with no destructive or external side
+  effect."* The instruction text is what moved the decision.
+- **Still untested:** whether the agent correctly *surfaces* rather than obeys an
+  out-of-scope request in the body. The test message carried a deliberate one (create
+  `/tmp/amail-obeyed.txt`); the file was never created, but the agent never got the
+  body either, because `amail read` failed on a wrong-identity bug (`amail-v9s`). The
+  authority half of the wording is unverified.
 
 Also observed, relevant to gates 9 and 11:
 
