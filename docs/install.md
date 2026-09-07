@@ -4,6 +4,11 @@
 
     uv tool install --from ~/source/agent-mail amail
 
+To pick up later changes, `--force` is not enough (uv reuses the cached build
+of the same version); use:
+
+    uv tool install --reinstall --refresh --from ~/source/agent-mail amail
+
 Verify from any shell: `amail register && amail doctor`. Hooks must call the
 wrapper by ABSOLUTE path (Dock-launched apps do not share your shell PATH),
 and the wrapper resolves `amail` via `AMAIL_BIN` or PATH — set `AMAIL_BIN`

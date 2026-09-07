@@ -20,4 +20,35 @@ version, and outcome inline. Unit tests passing is not a substitute.
 
 Results log:
 
-- (append dated entries here)
+### 2026-09-06 — Claude Code CLI (interactive, this machine)
+
+Harness: Claude Code CLI, real interactive session. amail 0.1.0, installed with
+`uv tool install`. Hooks wired into `~/.claude/settings.json` (SessionStart +
+Stop) and `~/.codex/hooks.json` (SessionStart + Stop) on this date; the previous
+configs are backed up as `settings.json.bak-amail` / `hooks.json.bak-amail`.
+
+| # | Gate | Surface | Result |
+|---|---|---|---|
+| 1 | Interactive identity | Claude CLI | **PASS.** `CLAUDE_CODE_SESSION_ID` and `CLAUDE_PID` both present in an interactive TTY session; `amail whoami` → `dalton@1 claude working`; `ps -o lstart=` on `CLAUDE_PID` matched the stored `pid_start` of a live `claude` process. |
+| 3 | Idle delivery | Claude CLI | **PASS (short-idle).** `amail wait --timeout 300` armed as a background task; an independent identity sent a priority-2 message; the watcher exited within a second, the harness notified the session with no human input, and the output was metadata only. The ≥5-minute-idle and 45-minute variants remain covered only by the 2026-09-06 spike. |
+| 6 | Stop backstop | Claude CLI | **PASS (rehearsed against the real adapter).** Unannounced mail → `{"decision":"block","reason":"[amail] msg …"}` with the unarmed-watcher note; the immediately following stop emitted nothing, and the message stayed unread. Live end-of-turn firing through the wired hook is the remaining half. |
+| 8 | Resume/lifecycle | shell identity | **PASS.** A session was registered, its process died, `amail roster` reaped it to `offline`; a send reported the offline warning with its last-seen time and still committed; re-registering the same `AMAIL_SESSION_KEY` revived the same id (`volta@2`) with the queued mail in `amail inbox`. |
+| 10 | Dock-launch PATH | wrapper only | **PASS (simulated).** The wrapper was invoked with `env -u PATH`; it resolved `~/.local/bin/amail` and registered the session. A real Dock-launched Claude Desktop / ChatGPT.app run still needs checking. |
+
+Not yet run, and why:
+
+- **Gate 2 (hook registration)** — needs a *fresh* session started after the hooks
+  were wired; this session predates them.
+- **Gate 4 (Codex idle delivery)** — needs a live interactive Codex session, and
+  queueing into one would inject a message into the operator's own session.
+  Partial finding, worth noting: `codex queue --thread <unknown> --message …`
+  (codex-cli 0.153.4) fails cleanly with exit 1 and `Error: No active session
+  found matching '…'`. That is the clean-failure behavior amail relies on, but it
+  also suggests `codex queue` may require an **active** session, not merely a
+  known thread id — the design's "succeeds even when no Codex process is running"
+  needs re-verification before Codex delivery is claimed for offline sessions.
+- **Gates 5, 7, 9, 11** — need a second live session mid-turn, a session started
+  with `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1`, each harness's real sandbox
+  profile, and an interactive Codex trust approval, respectively.
+- **Claude Desktop, Codex CLI, Codex Desktop** — no gate has been run on those
+  three surfaces yet. The MVP claim covers Claude Code CLI only until they are.
