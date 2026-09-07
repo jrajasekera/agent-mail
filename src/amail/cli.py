@@ -7,7 +7,7 @@ import os
 import sys
 from collections.abc import Mapping
 
-from amail import db, mail, registry
+from amail import db, mail, registry, routing
 
 
 def _require_agent(conn, env):
@@ -128,6 +128,14 @@ def dispatch(args, conn, env, home) -> int:
             return 1
         if warning:
             print(warning, file=sys.stderr)
+        header = routing.header_line(mail.Header(
+            msg_id, agent.id, agent.name, args.priority,
+            registry._now()))
+        rung = routing.ring_all(home, targets, header)
+        if rung < len(targets):
+            print(f"message {msg_id} is committed; pushed {rung}/"
+                  f"{len(targets)} — the rest will see it via a waiter or"
+                  f" hook backstop", file=sys.stderr)
         if args.json:
             print(json.dumps({"message_id": msg_id,
                               "recipients": [registry.handle(t)
