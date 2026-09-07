@@ -40,3 +40,22 @@ def test_overlapping_write_transactions_conflict_cleanly(home):
     c1.execute("COMMIT")
     c2.execute("BEGIN IMMEDIATE")   # now succeeds
     c2.execute("COMMIT")
+
+
+def test_concurrent_connects_do_not_fail(home):
+    import threading
+
+    errors = []
+
+    def worker():
+        try:
+            db.connect(home).close()
+        except Exception as e:            # a locked db must not surface here
+            errors.append(e)
+
+    threads = [threading.Thread(target=worker) for _ in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert not errors, errors

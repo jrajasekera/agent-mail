@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import sqlite3
+import time
 from collections.abc import Mapping
 from pathlib import Path
 
@@ -60,12 +61,27 @@ def amail_home(env: Mapping[str, str]) -> Path:
     return home
 
 
+def _enable_wal(conn: sqlite3.Connection) -> None:
+    """Switching journal modes needs a lock, and SQLite answers SQLITE_BUSY
+    without consulting the busy handler — so retry, and skip the pragma once
+    another connection has already put the database in WAL."""
+    for attempt in range(20):
+        if conn.execute("PRAGMA journal_mode").fetchone()[0] == "wal":
+            return
+        try:
+            conn.execute("PRAGMA journal_mode=WAL")
+            return
+        except sqlite3.OperationalError:
+            time.sleep(0.05)
+    raise RuntimeError("could not put mail.db into WAL mode")
+
+
 def connect(home: Path) -> sqlite3.Connection:
     conn = sqlite3.connect(home / "mail.db", timeout=5.0)
     conn.isolation_level = None
     conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA busy_timeout=5000")
+    conn.execute("PRAGMA busy_timeout=5000")   # before any lock is taken
+    _enable_wal(conn)
     conn.execute("PRAGMA foreign_keys=ON")
     conn.executescript(SCHEMA)
     row = conn.execute(
