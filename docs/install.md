@@ -49,6 +49,10 @@ the command line, only the script/adapter behind it (acceptance gate 11).
 Mirror the CLAUDE.md instructions in `~/.codex/AGENTS.md`. An idle Codex
 session does start a turn on queued mail — acceptance gate 4 passed on
 codex-cli 0.153.4, 2026-09-07, waking an idle session in about 15 seconds.
+Mail sent to a Codex session whose process has exited is durable too: the
+queue write succeeds, and the header is delivered when that thread is
+resumed (verified 2026-09-07). `codex queue` only fails on an unknown
+thread id, not on a stopped one.
 
 Two Codex-specific limitations:
 

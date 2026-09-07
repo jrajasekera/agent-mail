@@ -270,7 +270,7 @@ delivery is a latency optimization, not a correctness dependency.
 | Surface | Mechanism |
 |---|---|
 | Claude Code CLI + Desktop | Touch `~/.amail/doorbells/<agent-id>`; the session's backgrounded `amail wait` exits, and the harness wakes the session on exit |
-| Codex CLI + Desktop | `codex queue --thread <thread> --message "<metadata header>"` — a write to `~/.codex/queue_1.sqlite`; arrives as a user message and **wakes an idle session into an unprompted turn** (verified on codex-cli 0.153.4, 2026-09-07), fails cleanly (exit 1) on a bad thread id. Bounded subprocess timeout on the sender side. **The "succeeds even when no Codex process is running" claim is still unverified** (`amail-a1w`), and a Codex session has no thread id at all until its first turn (`amail-eec`) |
+| Codex CLI + Desktop | `codex queue --thread <thread> --message "<metadata header>"` — a write to `~/.codex/queue_1.sqlite`; arrives as a user message and **wakes an idle session into an unprompted turn** (verified on codex-cli 0.153.4, 2026-09-07). **Offline sends are durable** (verified 2026-09-07, `amail-a1w`): queueing to a known thread whose process has exited exits 0, persists a `queued_items` row, and the row is drained into the transcript as user input when the thread is later resumed. The exit-1 path is *unknown thread id only* (`no rollout found for thread id ...`), not "no live process". Bounded subprocess timeout on the sender side. A Codex session still has no thread id at all until its first turn (`amail-eec`) |
 | Pi (deferred) | Extension watches the doorbell file, injects the header at `before_agent_start` |
 | All | Hook backstops surface **unannounced** metadata headers (see hook adapters below) |
 

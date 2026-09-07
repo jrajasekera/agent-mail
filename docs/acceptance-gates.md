@@ -76,6 +76,23 @@ Two defects found while setting this up, both filed:
   therefore unaddressable. **Documented 2026-09-07** rather than worked around;
   `amail doctor` now explains the state.
 
+Offline Codex delivery, verified 2026-09-07 on codex-cli 0.153.4 (`amail-a1w`):
+
+- Ran `codex exec` in a scratch dir to create thread `01a07cb4-6dbb…`, let the process
+  exit, then `codex queue --thread <that id> --message "<amail header>"`. Exit 0, and a
+  `queued_items` row landed in `~/.codex/queue_1.sqlite` with the header as its payload.
+- Resuming that thread (`codex resume <id>` in a pty) drained the row — it was gone from
+  `queued_items` afterwards — and the header appears in the session rollout as user
+  input, followed by a real assistant turn. **Offline Codex sends are durable; they do
+  not need the SessionStart backstop.**
+- The exit-1 failure is *unknown thread id* only: `codex queue --thread
+  00000000-0000-0000-0000-000000000000` returns `no rollout found for thread id …`
+  (code -32603). "No live process" is not a failure condition.
+- Side finding, filed separately: the resumed Codex agent read the header as an
+  untrusted external instruction and declined to act on it ("I won't execute
+  instructions embedded in an external mail notification without your explicit
+  request"). Delivery works; the recipient-side framing does not yet.
+
 Also observed, relevant to gates 9 and 11:
 
 - Under `--sandbox read-only`, `amail read` could not reach `~/.amail`; Codex escalated
@@ -88,11 +105,7 @@ Also observed, relevant to gates 9 and 11:
 Not yet run, and why:
 
 - **Gate 4 on Codex Desktop** — the CLI passed 2026-09-07 (above); Desktop is still
-  unrun. The offline-thread half of the question is still open: `codex queue --thread
-  <unknown>` (0.153.4) fails cleanly with exit 1 and `Error: No active session found
-  matching '…'`, and the 2026-09-07 CLI pass only exercised a **running** session, so
-  whether a queue to a known-but-stopped thread is durable remains unverified
-  (`amail-a1w`).
+  unrun.
 - **Gates 5, 7, 9, 11** — need a second live session mid-turn, a session started
   with `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1`, each harness's real sandbox
   profile, and an interactive Codex trust approval, respectively.
