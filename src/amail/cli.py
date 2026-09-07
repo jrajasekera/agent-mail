@@ -133,6 +133,8 @@ def dispatch(args, conn, env, home) -> int:
                   file=sys.stderr)
             return 1
         body = args.body
+        if args.to_id is not None and body is None and args.recipient:
+            body, args.recipient = args.recipient, None  # `send --to-id N BODY`
         if args.body_file:
             body = (sys.stdin.read() if args.body_file == "-"
                     else open(args.body_file).read())

@@ -29,3 +29,18 @@ def test_whoami_json(home, capsys):
 def test_whoami_unregistered_fails(home, capsys):
     assert cli.main(["whoami"], env_for(home)) == 1
     assert "register" in capsys.readouterr().err
+
+
+def test_send_with_to_id_takes_a_single_positional_body(home, capsys):
+    env_a = {"AMAIL_HOME": str(home), "CLAUDE_CODE_SESSION_ID": "s-x",
+             "CLAUDE_PID": "33", "AMAIL_PID_START": "t"}
+    env_b = {"AMAIL_HOME": str(home), "CLAUDE_CODE_SESSION_ID": "s-y",
+             "CLAUDE_PID": "33", "AMAIL_PID_START": "t"}
+    cli.main(["register"], env_a)
+    id_a = capsys.readouterr().out.strip().split("@")[1]
+    cli.main(["register"], env_b)
+    capsys.readouterr()
+    assert cli.main(["send", "--to-id", id_a, "hello by id"], env_b) == 0
+    capsys.readouterr()
+    cli.main(["inbox", "--preview"], env_a)
+    assert "hello by id" in capsys.readouterr().out
