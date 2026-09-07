@@ -60,18 +60,106 @@ This protocol applies when ending a Beads implementation workflow. It is subordi
 
 ## Build & Test
 
-_Add your build and test commands here_
+```bash
+uv sync                    # create/refresh .venv
+uv run pytest              # full suite (55 tests, ~7s)
+uv run pytest tests/test_mail.py -v
+```
+
+Reinstalling the CLI after a change — `--force` is NOT enough, uv reuses the cached
+build of the same version:
 
 ```bash
-# Example:
-# npm install
-# npm test
+uv tool install --reinstall --refresh --from ~/source/agent-mail amail
 ```
+
+Manual smoke test against a throwaway mailbox (never touches `~/.amail`):
+
+```bash
+export AMAIL_HOME=/tmp/amail-smoke
+amail register && amail doctor
+rm -rf /tmp/amail-smoke
+```
+
+Python 3.14, **stdlib only at runtime** (`sqlite3`, `argparse`, `subprocess`, `select`,
+`json`). `pytest` is the only dev dependency. Do not add a runtime dependency without
+saying why in the commit.
 
 ## Architecture Overview
 
-_Add a brief overview of your project architecture_
+`amail` gives coding agents in different harnesses on one Mac presence and messaging over
+a shared SQLite mailbox at `~/.amail/mail.db`. No daemon: `amail send` writes the row and
+rings the recipient's doorbell inline. Read
+[docs/plans/2026-09-06_agent-mail-design.md](docs/plans/2026-09-06_agent-mail-design.md)
+before making design-level changes — it records why each decision was made.
+
+```
+src/amail/
+  db.py         schema v1, WAL, explicit transactions, version gate
+  identity.py   session resolution: harness env vars, then pid ancestry
+  names.py      scientist-name allocation over live agents
+  registry.py   registration, revival, caller identity, reaping, roster
+  mail.py       send with audience snapshot; announced/read state
+  routing.py    the one metadata formatter; doorbell + codex-queue push
+  waiter.py     singleton blocking watcher (kqueue; DB poll is the truth)
+  hooks.py      event-specific harness adapters, fail-open
+  doctor.py     diagnostics, including honest "cannot verify here"
+  cli.py        argparse dispatch over the modules above
+hooks/amail-hook.sh   stable shim that harness hook configs point at
+```
+
+Tables: `agents`, `messages`, and `message_recipients` — the last is the single
+authoritative audience (inbox visibility, read authorization, announcement state, and
+push targeting all read it), snapshotted in the same transaction that inserts the
+message.
 
 ## Conventions & Patterns
 
-_Add your project-specific conventions here_
+These are behavioral contracts, not style preferences. Breaking one is a bug even if the
+suite still passes.
+
+- **Metadata only on every automatic path.** Doorbell contents, waiter output, hook
+  output, and `codex queue` arguments carry message id, sender `name@id`, priority, and
+  timestamp — never any part of the body, not even a preview. Everything goes through
+  `routing.header_line`; `tests/test_sentinel.py` guards it. Body previews exist only
+  behind `amail inbox --preview`, which no hook or automatic path may use.
+- **Announced != read.** The waiter and hooks fire on *unannounced* mail and mark it
+  announced when they surface it. Previously announced mail must never re-fire a watcher
+  or re-block a stop; genuinely new mail must. Announcement state is bookkeeping and
+  never hides unread mail from `amail inbox`.
+- **Messages bind to agent ids.** Names are display labels, recycled after death, and are
+  never caller identity. Caller identity is a validated `AMAIL_AGENT_ID` or the native
+  session key; a conflict between them raises, it does not pick a winner.
+- **A mailbox outlives its endpoint.** Re-registering a `session_key` — including an
+  offline one — revives the same agent id. Reaping marks endpoints offline; it never
+  destroys mailboxes.
+- **Liveness is `(pid, pid_start)`,** never pid alone (macOS recycles pids). `last_seen`
+  means last amail activity, not process health.
+- **Send persists before it notifies.** Push is best effort with a bounded timeout;
+  `routing.ring` returns `False` on any failure and never raises, because the row is
+  already committed.
+- **Hooks are fail-open.** `amail hook` exits 0 no matter what and logs one bounded,
+  body-free line to `~/.amail/hook.log`. A broken amail must never break a session.
+  Harness hook configs point at `hooks/amail-hook.sh` and that command line must never
+  change — Codex trusts hooks per command hash, so an edit silently disables them.
+- **Transactions:** every read-then-decide write runs inside `BEGIN IMMEDIATE` with
+  bounded retry. Process inspection and git subprocesses stay outside writer locks.
+- **`amail wait` is a real blocking process,** never a bash `sleep` loop (Claude Code
+  kills bare sleeps but backgrounds genuine long-running commands). kqueue is a latency
+  optimization; the SQLite poll is the correctness path.
+- **Never capture raw `env`** into message bodies, headers, or logs — Codex exports API
+  keys into every command's environment.
+- **Tests that spawn subprocesses must scrub ambient identity** with
+  `tests/conftest.py::clean_env`; the suite often runs *inside* a harness session.
+- All state lives under `~/.amail/` (mode 0700), overridable with `AMAIL_HOME` — tests
+  depend on that override.
+
+## Testing & Verification
+
+TDD: write the failing test, watch it fail, then implement. Unit tests are not proof the
+product works — the surface behavior is defined by
+[docs/acceptance-gates.md](docs/acceptance-gates.md), which is manual and per-harness.
+Do not claim a surface works until its gate is recorded there with a date and a version.
+
+Track work in beads (`bd ready`, `bd create`); open gates and known risks are already
+filed.
