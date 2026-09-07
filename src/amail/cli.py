@@ -162,13 +162,22 @@ def dispatch(args, conn, env, home) -> int:
         except ValueError as e:
             print(str(e), file=sys.stderr)
             return 1
-        if warning:
-            print(warning, file=sys.stderr)
         header = routing.header_line(mail.Header(
             msg_id, agent.id, agent.name, args.priority,
             registry._now()))
-        rung = routing.ring_all(home, targets, header)
-        if rung < len(targets):
+        rung, unreachable = routing.ring_all(home, targets, header)
+        # The offline warning is a prediction made before the push; the push
+        # knows better, so report it only if the push did not contradict it.
+        if unreachable:
+            names = ", ".join(registry.handle(a) for a in unreachable)
+            print(f"message {msg_id} is committed but {names} cannot be"
+                  f" reached now or later — that session ended before its"
+                  f" thread became resumable, so no backstop will deliver it",
+                  file=sys.stderr)
+        elif warning:
+            print(warning, file=sys.stderr)
+        backstopped = len(targets) - rung - len(unreachable)
+        if backstopped:
             print(f"message {msg_id} is committed; pushed {rung}/"
                   f"{len(targets)} — the rest will see it via a waiter or"
                   f" hook backstop", file=sys.stderr)
