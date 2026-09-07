@@ -142,7 +142,7 @@ cp -rf source dest          # NOT: cp -r source dest
 ## Beads Rust Issue Tracker
 
 This repository uses Beads Rust (`br`) for durable task tracking. Use the
-project skill at `.agents/skills/beads/SKILL.md` for the full workflow.
+globally installed `br` skill for the full workflow.
 
 ```bash
 br info --json
