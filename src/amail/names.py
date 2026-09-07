@@ -13,6 +13,14 @@ POOL: tuple[str, ...] = (
     "meitner", "rutherford", "dalton", "avogadro", "lavoisier", "linnaeus",
     "tesla", "volta", "ampere", "ohm", "hertz", "doppler", "boltzmann",
     "carson", "goodall", "mcclintock",
+    "leibniz", "descartes", "pascal", "fermat", "riemann", "cauchy", "laplace",
+    "lagrange", "fourier", "poincare", "cantor", "erdos", "archimedes",
+    "euclid", "pythagoras", "nash", "wiles", "babbage", "dijkstra", "knuth",
+    "mccarthy", "berners", "pauli", "born", "oppenheimer", "chandrasekhar",
+    "brahe", "halley", "huygens", "bose", "thomson", "foucault", "joule",
+    "watt", "kelvin", "celsius", "burnell", "payne", "mendeleev", "pauling",
+    "boyle", "fleming", "crick", "watson", "salk", "hooke", "wallace", "hahn",
+    "hodgkin", "banting", "harvey",
 )
 
 
