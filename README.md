@@ -10,5 +10,7 @@ daemon, no network.
     amail send curie "about to merge to main, are you touching it?" --priority 1
     amail inbox
 
-Status: design approved, not yet implemented.
-See [docs/plans/2026-09-06_agent-mail-design.md](docs/plans/2026-09-06_agent-mail-design.md).
+Status: implemented — four-surface MVP (Claude Code CLI/Desktop, Codex
+CLI/Desktop), Pi pending. Live-harness gates: [docs/acceptance-gates.md](docs/acceptance-gates.md).
+Install: [docs/install.md](docs/install.md).
+Design: [docs/plans/2026-09-06_agent-mail-design.md](docs/plans/2026-09-06_agent-mail-design.md).
