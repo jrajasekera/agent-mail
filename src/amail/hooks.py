@@ -46,13 +46,13 @@ def run_hook(harness: str, event: str, env: Mapping[str, str],
     conn = db.connect(home)
     try:
         if event == "sessionstart":
-            agent = registry.register(conn, env, home)
+            agent = registry.register(conn, env, home, harness)
             if harness == "claude" and env.get("CLAUDE_ENV_FILE"):
                 with open(env["CLAUDE_ENV_FILE"], "a") as f:
                     f.write(f"export AMAIL_AGENT_ID={agent.id}\n")
             return 0, "\n".join(_announce(conn, agent))
         if harness == "claude" and event == "stop":
-            agent = registry.current_agent(conn, env)
+            agent = registry.current_agent(conn, env, harness)
             if agent is None:
                 return 0, ""
             lines = _announce(conn, agent)   # marking bounds continuation

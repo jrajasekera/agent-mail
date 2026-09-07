@@ -207,6 +207,22 @@ error, and a conflict with the resolvable native session key is an error, not a
 silent preference) → native session key → pid-ancestry fallback. There is no
 name-based caller identity.
 
+A caller that already knows its harness passes it as `expect_harness` — every hook
+does, since it is an argument on the hook command line. That harness's probe is tried
+first, and a resolution that still disagrees raises `IdentityConflict` rather than
+picking a winner. Without this, a Codex process which inherited a Claude session's
+environment resolves as claude and its SessionStart hook silently rewrites the
+*parent's* row (observed live 2026-09-07, `amail-3um`). The rule is the same one that
+already governs `AMAIL_AGENT_ID` versus the native key: a conflict is an error, never a
+preference.
+
+Codex has one shape the other harnesses do not: **the thread id does not exist until
+the session's first turn**, so a freshly launched Codex session has no session key, no
+mailbox, and no route. It registers on its first turn. This is documented rather than
+worked around — a provisional mailbox that is later re-keyed would need to merge two
+rows, which is precisely what "messages bind to agent ids" exists to prevent
+(`amail-eec`).
+
 Liveness uses `(pid, pid_start)` rather than pid alone — macOS recycles pids, and
 `ps -o lstart=` is a stable, second-resolution start time (verified). If the pid is
 gone or its start time differs, the endpoint is dead (mailbox unaffected).

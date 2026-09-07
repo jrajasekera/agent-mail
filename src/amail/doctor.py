@@ -10,6 +10,19 @@ from pathlib import Path
 
 from amail import identity, registry, waiter
 
+CODEX_FIRST_TURN = (
+    "no thread id yet — a Codex session has no thread id until its first"
+    " turn, so this session has no mailbox and cannot be sent to; it"
+    " registers automatically on the first turn")
+
+
+def _codex_before_first_turn(env: Mapping[str, str]) -> bool:
+    """Under Codex, but the thread the route needs does not exist yet."""
+    if "CODEX_THREAD_ID" in env or "AMAIL_SESSION_KEY" in env:
+        return False
+    found = identity.walk_to_harness(os.getpid())
+    return found is not None and found[0] == "codex"
+
 
 def report(conn: sqlite3.Connection, env: Mapping[str, str],
            home: Path) -> list[tuple[str, str]]:
@@ -31,6 +44,8 @@ def report(conn: sqlite3.Connection, env: Mapping[str, str],
     out.append(("mailbox", f"{home / 'mail.db'}"
                 f" ({'writable' if writable else 'NOT writable'})"))
     out.append(("codex binary", shutil.which("codex") or "not on PATH"))
+    if _codex_before_first_turn(env):
+        out.append(("codex mailbox", CODEX_FIRST_TURN))
     if agent:
         lock = home / "waiters" / f"{agent.id}.pid"
         armed = "not armed"

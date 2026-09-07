@@ -1,5 +1,7 @@
 import os
 
+import pytest
+
 from amail import identity
 
 
@@ -39,3 +41,35 @@ def test_pid_alive_requires_matching_start():
     assert identity.pid_alive(os.getpid(), start)
     assert not identity.pid_alive(os.getpid(), "some other time")
     assert not identity.pid_alive(2**22, start)
+
+
+def test_expected_harness_beats_inherited_claude_env():
+    # amail-3um: a Codex process that inherited a Claude session's env must
+    # resolve as Codex, not adopt the parent's identity.
+    ident = identity.resolve({
+        "CLAUDE_CODE_SESSION_ID": "uuid-1", "CLAUDE_PID": "4242",
+        "CODEX_THREAD_ID": "th-9", "AMAIL_PID": "77",
+        "AMAIL_PID_START": "t"}, expect_harness="codex")
+    assert (ident.harness, ident.session_key) == ("codex", "codex:th-9")
+
+
+def test_expected_harness_raises_rather_than_picking_a_winner():
+    # No thread id to resolve with, and inherited Claude vars present: the
+    # contract says a conflict raises, it does not pick a winner.
+    with pytest.raises(identity.IdentityConflict):
+        identity.resolve({"CLAUDE_CODE_SESSION_ID": "uuid-1",
+                          "CLAUDE_PID": "4242", "AMAIL_PID_START": "t"},
+                         expect_harness="codex")
+
+
+def test_expected_harness_matching_env_is_unchanged():
+    ident = identity.resolve({
+        "CLAUDE_CODE_SESSION_ID": "uuid-1", "CLAUDE_PID": "4242",
+        "AMAIL_PID_START": "t"}, expect_harness="claude")
+    assert ident.session_key == "claude:uuid-1"
+
+
+def test_expected_harness_rejects_ancestry_of_a_different_harness():
+    # The ancestry fallback must not hand a Codex hook a claude identity.
+    with pytest.raises(identity.IdentityConflict):
+        identity.resolve({"AMAIL_PID_START": "t"}, expect_harness="pi")

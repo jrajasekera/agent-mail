@@ -67,12 +67,14 @@ Two defects found while setting this up, both filed:
   mailbox. Re-running with `env -u CLAUDE_CODE_SESSION_ID -u CLAUDE_PID -u
   AMAIL_AGENT_ID` produced a correct `codex:` registration. This is the same ambient-
   identity hazard `tests/conftest.py::clean_env` guards in the suite, unguarded in
-  production.
+  production. **Fixed 2026-09-07** — the hook's harness argument is now authoritative;
+  re-verified live against a real Codex session with the environment left unscrubbed.
 - **A Codex session has no mailbox until its first turn** (`amail-eec`). On
   0.153.4 the thread id does not exist at TUI launch — SessionStart fires when the
   first turn creates the thread (`heisenberg@11` was created at 03:33:25Z, after the
   turn, not at 03:32 launch). A freshly opened, never-prompted Codex session is
-  therefore unaddressable.
+  therefore unaddressable. **Documented 2026-09-07** rather than worked around;
+  `amail doctor` now explains the state.
 
 Also observed, relevant to gates 9 and 11:
 

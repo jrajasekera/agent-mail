@@ -1,4 +1,10 @@
-"""Who am I? Env vars first (verified by spike), pid ancestry as fallback."""
+"""Who am I? Env vars first (verified by spike), pid ancestry as fallback.
+
+A caller that already knows its harness — every hook does, it is argv[2] —
+passes `expect_harness`. That probe is tried first, and a resolution that
+still disagrees raises rather than picking a winner: a Codex process which
+inherited a Claude session's env must never adopt the parent's mailbox.
+"""
 from __future__ import annotations
 
 import os
@@ -58,19 +64,71 @@ def _fallback_pid() -> int:
     return found[1] if found else os.getppid()
 
 
-def resolve(env: Mapping[str, str]) -> SessionIdentity:
+class IdentityConflict(RuntimeError):
+    """The environment resolves to a harness other than the one we were
+    invoked as. Never resolved by precedence — the caller must scrub the
+    inherited variables or pass an explicit key."""
+
+
+Probe = tuple[str, str, int]        # harness, native key, pid
+
+
+def _probe_explicit(env: Mapping[str, str]) -> Probe | None:
     if "AMAIL_SESSION_KEY" in env:
-        return _finish(env, env.get("AMAIL_HARNESS", "shell"),
-                       env["AMAIL_SESSION_KEY"], int(env["AMAIL_PID"]))
+        return (env.get("AMAIL_HARNESS", "shell"),
+                env["AMAIL_SESSION_KEY"], int(env["AMAIL_PID"]))
+    return None
+
+
+def _probe_claude(env: Mapping[str, str]) -> Probe | None:
     if "CLAUDE_CODE_SESSION_ID" in env and "CLAUDE_PID" in env:
-        return _finish(env, "claude", env["CLAUDE_CODE_SESSION_ID"],
-                       int(env["CLAUDE_PID"]))
+        return ("claude", env["CLAUDE_CODE_SESSION_ID"],
+                int(env["CLAUDE_PID"]))
+    return None
+
+
+def _probe_codex(env: Mapping[str, str]) -> Probe | None:
     if "CODEX_THREAD_ID" in env:
         pid = int(env.get("AMAIL_PID", "0")) or _fallback_pid()
-        return _finish(env, "codex", env["CODEX_THREAD_ID"], pid)
-    found = walk_to_harness(os.getpid())
-    if found:
-        harness, pid = found
-        return _finish(env, harness, f"pid:{pid}", pid)
-    pid = os.getppid()
-    return _finish(env, "shell", f"pid:{pid}", pid)
+        return ("codex", env["CODEX_THREAD_ID"], pid)
+    return None
+
+
+NATIVE_PROBES = {"claude": _probe_claude, "codex": _probe_codex}
+_PROBE_ORDER = (_probe_claude, _probe_codex)
+
+
+def _first_hit(env: Mapping[str, str],
+               expect_harness: str | None) -> Probe | None:
+    explicit = _probe_explicit(env)
+    if explicit is not None:
+        return explicit
+    preferred = NATIVE_PROBES.get(expect_harness or "")
+    if preferred is not None:                 # our own harness answers first
+        hit = preferred(env)
+        if hit is not None:
+            return hit
+    for probe in _PROBE_ORDER:
+        hit = probe(env)
+        if hit is not None:
+            return hit
+    return None
+
+
+def resolve(env: Mapping[str, str],
+            expect_harness: str | None = None) -> SessionIdentity:
+    hit = _first_hit(env, expect_harness)
+    if hit is not None:
+        ident = _finish(env, *hit)
+    else:
+        found = walk_to_harness(os.getpid())
+        if found:
+            harness, pid = found
+        else:
+            harness, pid = "shell", os.getppid()
+        ident = _finish(env, harness, f"pid:{pid}", pid)
+    if expect_harness and ident.harness != expect_harness:
+        raise IdentityConflict(                # never log env contents here
+            f"invoked as {expect_harness} but this environment resolves to"
+            f" {ident.harness}; refusing to pick a winner")
+    return ident

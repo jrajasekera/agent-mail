@@ -46,9 +46,28 @@ Add SessionStart and Stop entries to `~/.codex/hooks.json` pointing at
 `.../amail-hook.sh codex sessionstart` / `codex stop` (absolute paths).
 Codex asks to trust each hook once; trust is per command hash — never edit
 the command line, only the script/adapter behind it (acceptance gate 11).
-Mirror the CLAUDE.md instructions in `~/.codex/AGENTS.md`. Whether an idle
-Codex session starts a turn on queued mail is acceptance gate 4; until it
-passes, treat Codex delivery as at-next-boundary.
+Mirror the CLAUDE.md instructions in `~/.codex/AGENTS.md`. An idle Codex
+session does start a turn on queued mail — acceptance gate 4 passed on
+codex-cli 0.153.4, 2026-09-07, waking an idle session in about 15 seconds.
+
+Two Codex-specific limitations:
+
+- **No mailbox until the first turn.** Codex has no thread id when the TUI
+  launches; SessionStart fires when the first turn creates the thread. A
+  freshly opened, never-prompted Codex session has no mailbox, does not
+  appear in `amail roster`, and cannot be sent to. It registers itself on
+  the first turn. `amail doctor` says so when it sees this state.
+- **Scrub inherited identity when one agent launches another.** A Codex
+  process started from inside a Claude session inherits
+  `CLAUDE_CODE_SESSION_ID`, `CLAUDE_PID` and `AMAIL_AGENT_ID`. The hook now
+  refuses to resolve as the wrong harness and logs an `IdentityConflict` to
+  `~/.amail/hook.log` instead of writing to the parent's mailbox, but the
+  Codex session still gets no mailbox of its own. Launch it with those
+  variables removed:
+
+  ```bash
+  env -u CLAUDE_CODE_SESSION_ID -u CLAUDE_PID -u AMAIL_AGENT_ID codex
+  ```
 
 ## Pi
 

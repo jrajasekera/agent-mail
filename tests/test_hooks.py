@@ -1,7 +1,11 @@
+import io
 import json
 import os
+import sys
 
-from amail import db, hooks, mail, registry
+import pytest
+
+from amail import cli, db, hooks, identity, mail, registry
 
 PID = str(os.getpid())
 
@@ -79,3 +83,50 @@ def test_hook_cli_is_fail_open(home, capsys):
     rc = cli.main(["hook", "claude", "stop"],
                   {"AMAIL_HOME": "/nonexistent/forbidden/path"})
     assert rc == 0                                     # never breaks a session
+
+
+def test_codex_hook_in_inherited_claude_env_does_not_touch_claude_row(home):
+    """amail-3um, reproduced: a Codex session launched from a Claude session
+    inherits CLAUDE_* and must not write to the parent's mailbox."""
+    conn = db.connect(home)
+    parent = registry.register(conn, {"CLAUDE_CODE_SESSION_ID": "s-parent",
+                                      "CLAUDE_PID": PID})
+    before = registry.get(conn, parent.id)
+
+    code, _ = hooks.run_hook("codex", "sessionstart", {
+        "AMAIL_HOME": str(home), "CLAUDE_CODE_SESSION_ID": "s-parent",
+        "CLAUDE_PID": PID, "AMAIL_PID": PID},
+        json.dumps({"session_id": "th-child"}))
+    assert code == 0
+
+    child = conn.execute("SELECT harness FROM agents"
+                         " WHERE session_key='codex:th-child'").fetchone()
+    assert child is not None and child["harness"] == "codex"
+    after = registry.get(conn, parent.id)
+    assert (after.cwd, after.last_seen) == (before.cwd, before.last_seen)
+
+
+def test_codex_hook_without_thread_id_fails_loudly_not_silently(
+        home, monkeypatch):
+    """amail-3um/amail-eec: no thread id yet and inherited Claude vars — the
+    hook stays fail-open but must log rather than hijack the Claude row."""
+    conn = db.connect(home)
+    parent = registry.register(conn, {"CLAUDE_CODE_SESSION_ID": "s-parent",
+                                      "CLAUDE_PID": PID})
+    before = registry.get(conn, parent.id)
+
+    env = {"AMAIL_HOME": str(home), "CLAUDE_CODE_SESSION_ID": "s-parent",
+           "CLAUDE_PID": PID}
+    with pytest.raises(identity.IdentityConflict):
+        hooks.run_hook("codex", "sessionstart", env, "{}")
+
+    # ... and the CLI wrapper the harness actually invokes stays fail-open.
+    monkeypatch.setattr(sys, "stdin", io.StringIO("{}"))
+    assert cli.main(["hook", "codex", "sessionstart"], env) == 0
+
+    after = registry.get(conn, parent.id)
+    assert (after.cwd, after.last_seen) == (before.cwd, before.last_seen)
+    log = (home / "hook.log").read_text()
+    assert "IdentityConflict" in log
+    assert "s-parent" not in log                      # no env contents in the log
+    assert len(log.splitlines()) == 1                 # bounded

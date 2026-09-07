@@ -59,8 +59,9 @@ def detect_branch(cwd: str) -> str | None:
 
 
 def register(conn: sqlite3.Connection, env: Mapping[str, str],
-             home: Path | None = None) -> Agent:
-    ident = identity.resolve(env)
+             home: Path | None = None,
+             expect_harness: str | None = None) -> Agent:
+    ident = identity.resolve(env, expect_harness)
     reap(conn, home)                       # frees names; outside the write txn
     cwd = env.get("PWD") or os.getcwd()    # slow work stays outside the lock
     branch = detect_branch(cwd)
@@ -104,13 +105,13 @@ def register(conn: sqlite3.Connection, env: Mapping[str, str],
     raise RuntimeError("registration contended; retry")
 
 
-def current_agent(conn: sqlite3.Connection,
-                  env: Mapping[str, str]) -> Agent | None:
+def current_agent(conn: sqlite3.Connection, env: Mapping[str, str],
+                  expect_harness: str | None = None) -> Agent | None:
     native_row = None
     try:
         native_row = conn.execute(
             "SELECT * FROM agents WHERE session_key = ?",
-            (identity.resolve(env).session_key,)).fetchone()
+            (identity.resolve(env, expect_harness).session_key,)).fetchone()
     except RuntimeError:
         pass
     if "AMAIL_AGENT_ID" in env:
