@@ -17,16 +17,21 @@ no threads, no locking.
 
 ## Status
 
-Implemented and installed. Live-harness verification so far covers **Claude Code CLI
-only** — identity, hook registration, idle delivery, the stop backstop, and session
-resume all pass there. The four-surface MVP claim (Claude Code CLI/Desktop, Codex
+Implemented and installed. Live-harness verification covers **Claude Code CLI**
+(identity, hook registration, idle delivery, the stop backstop, session resume) and
+**Codex CLI idle delivery**. The four-surface MVP claim (Claude Code CLI/Desktop, Codex
 CLI/Desktop) waits on the remaining gates in
 [docs/acceptance-gates.md](docs/acceptance-gates.md); Pi is deferred.
 
-One open risk, tracked as `amail-a1w`: on codex-cli 0.153.4, `codex queue` reports
-`No active session found` for an unknown thread, which may mean it needs a *running*
-session rather than any known thread id. If so, Codex delivery to an offline session
-falls back to the SessionStart backstop.
+Codex CLI idle delivery is verified as of 2026-09-07: a send wakes an idle Codex
+session into an unprompted turn in about 15 seconds, carrying metadata only.
+
+Three open risks on the Codex side. `amail-a1w`: `codex queue` reports `No active
+session found` for an unknown thread, so delivery to a *stopped* thread is still
+unverified — the passing test used a running session. `amail-eec`: a Codex session has
+no thread id, and so no mailbox, until its first turn. `amail-3um`: a Codex process that
+inherits `CLAUDE_CODE_SESSION_ID` resolves as its parent Claude session and writes to
+the wrong mailbox.
 
 ## Install
 

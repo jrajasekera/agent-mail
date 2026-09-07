@@ -254,7 +254,7 @@ delivery is a latency optimization, not a correctness dependency.
 | Surface | Mechanism |
 |---|---|
 | Claude Code CLI + Desktop | Touch `~/.amail/doorbells/<agent-id>`; the session's backgrounded `amail wait` exits, and the harness wakes the session on exit |
-| Codex CLI + Desktop | `codex queue --thread <thread> --message "<metadata header>"` — a durable write to `~/.codex/queue_1.sqlite`; succeeds even when no Codex process is running, arrives as a user message, fails cleanly (exit 1) on a bad thread id. Bounded subprocess timeout on the sender side |
+| Codex CLI + Desktop | `codex queue --thread <thread> --message "<metadata header>"` — a write to `~/.codex/queue_1.sqlite`; arrives as a user message and **wakes an idle session into an unprompted turn** (verified on codex-cli 0.153.4, 2026-09-07), fails cleanly (exit 1) on a bad thread id. Bounded subprocess timeout on the sender side. **The "succeeds even when no Codex process is running" claim is still unverified** (`amail-a1w`), and a Codex session has no thread id at all until its first turn (`amail-eec`) |
 | Pi (deferred) | Extension watches the doorbell file, injects the header at `before_agent_start` |
 | All | Hook backstops surface **unannounced** metadata headers (see hook adapters below) |
 
@@ -350,7 +350,7 @@ show:
 | Gate | Evidence needed |
 |---|---|
 | Session identity | Correct logical id and owner `(pid, pid_start)` from a real interactive session's model-run shell and from its actual hooks |
-| Idle delivery | An independent session's send produces a model-visible metadata notification without a human prompt. For Codex this is the open `codex queue` idle-turn question — **part of correctness, not etiquette** |
+| Idle delivery | An independent session's send produces a model-visible metadata notification without a human prompt. For Codex this is the `codex queue` idle-turn question — **part of correctness, not etiquette**. **Resolved for Codex CLI 2026-09-07: an idle session starts a turn unprompted, ~15s from send.** Codex Desktop unverified |
 | Active-turn delivery | Defined behavior while the recipient is mid-turn; no interrupt storms or repeated-turn loops |
 | Hook fallback | Metadata reaches the model when primary push is deliberately disabled or fails |
 | Lifecycle | Close, resume, and process replacement preserve the mailbox contract; no stale routes |
