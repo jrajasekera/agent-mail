@@ -82,8 +82,19 @@ class _NoPs:
         raise PermissionError(1, "Operation not permitted", "ps")
 
 
-def test_ps_exec_failure_is_distinguishable_from_a_dead_pid(monkeypatch):
+def _no_inspection(monkeypatch):
+    """Neither mechanism can look at a process: sysctl refused and ps cannot
+    be executed. This is what a hostile sandbox looks like."""
+    def refuse(pid):
+        raise identity.InspectionUnavailable("sysctl(kern.proc.pid): denied")
+
+    monkeypatch.setattr(identity, "kinfo", refuse)
+    monkeypatch.setattr(identity, "ancestry", refuse)
     monkeypatch.setattr(identity.subprocess, "run", _NoPs())
+
+
+def test_ps_exec_failure_is_distinguishable_from_a_dead_pid(monkeypatch):
+    _no_inspection(monkeypatch)
     with pytest.raises(identity.InspectionUnavailable):
         identity.pid_start(os.getpid())
     with pytest.raises(identity.InspectionUnavailable):
@@ -93,7 +104,7 @@ def test_ps_exec_failure_is_distinguishable_from_a_dead_pid(monkeypatch):
 def test_native_identity_resolves_without_ps(monkeypatch):
     """A sandboxed session still knows its own session_key: that comes from
     the harness env vars. Only pid_start needs process inspection."""
-    monkeypatch.setattr(identity.subprocess, "run", _NoPs())
+    _no_inspection(monkeypatch)
     ident = identity.resolve({"CLAUDE_CODE_SESSION_ID": "s-x",
                               "CLAUDE_PID": "123"}, "claude")
     assert ident.session_key == "claude:s-x"
@@ -102,7 +113,7 @@ def test_native_identity_resolves_without_ps(monkeypatch):
 
 
 def test_register_without_pid_start_fails_cleanly(conn, monkeypatch):
-    monkeypatch.setattr(identity.subprocess, "run", _NoPs())
+    _no_inspection(monkeypatch)
     with pytest.raises(RuntimeError, match="start time"):
         registry.register(conn, {"CLAUDE_CODE_SESSION_ID": "s-x",
                                  "CLAUDE_PID": "123"})
@@ -111,7 +122,7 @@ def test_register_without_pid_start_fails_cleanly(conn, monkeypatch):
 def test_reap_never_marks_agents_offline_it_cannot_verify(conn, monkeypatch):
     live = registry.register(conn, {"CLAUDE_CODE_SESSION_ID": "s-live",
                                     "CLAUDE_PID": str(os.getpid())})
-    monkeypatch.setattr(identity.subprocess, "run", _NoPs())
+    _no_inspection(monkeypatch)
     assert registry.reap(conn) == 0
     assert registry.get(conn, live.id).status != "offline"
 
@@ -121,15 +132,15 @@ def test_inherited_pin_is_still_rejected_without_ps(conn, monkeypatch):
     session runs, so the pin-conflict check must survive a missing ps."""
     other = registry.register(conn, {"CLAUDE_CODE_SESSION_ID": "s-parent",
                                      "CLAUDE_PID": str(os.getpid())})
-    monkeypatch.setattr(identity.subprocess, "run", _NoPs())
+    _no_inspection(monkeypatch)
     with pytest.raises(LookupError, match="identity conflict"):
         registry.current_agent(conn, {"CODEX_THREAD_ID": "t-child",
                                       "AMAIL_PID": "123",
                                       "AMAIL_AGENT_ID": str(other.id)})
 
 
-AMBIGUOUS = {"CLAUDE_CODE_SESSION_ID": "s-parent", "CLAUDE_PID": "111",
-             "CODEX_THREAD_ID": "t-child", "AMAIL_PID": "222",
+AMBIGUOUS = {"CLAUDE_CODE_SESSION_ID": "s-parent", "CLAUDE_PID": "14",
+             "CODEX_THREAD_ID": "t-child", "AMAIL_PID": "12",
              "AMAIL_PID_START": "t"}
 
 
@@ -137,21 +148,76 @@ def test_process_tree_breaks_a_tie_between_two_harness_environments(
         monkeypatch):
     """amail-svb: a Codex session launched from a Claude session's shell has
     BOTH sets of variables. Env can be inherited; the process tree cannot."""
-    monkeypatch.setattr(identity, "walk_to_harness",
-                        lambda pid: ("codex", 222))
+    monkeypatch.setattr(identity, "ancestry",
+                        lambda pid: _chain(CODEX_IN_CLAUDE))
     assert identity.resolve(AMBIGUOUS).session_key == "codex:t-child"
-    monkeypatch.setattr(identity, "walk_to_harness",
-                        lambda pid: ("claude", 111))
+    monkeypatch.setattr(identity, "ancestry",
+                        lambda pid: _chain(CLAUDE_IN_CODEX))
     assert identity.resolve(AMBIGUOUS).session_key == "claude:s-parent"
 
 
 def test_an_undecidable_tie_raises_rather_than_picking_a_winner(monkeypatch):
-    monkeypatch.setattr(identity, "walk_to_harness", lambda pid: None)
+    monkeypatch.setattr(identity, "ancestry",
+                        lambda pid: _chain([("me", 10), ("zsh", 11)]))
     with pytest.raises(identity.IdentityConflict, match="claude"):
         identity.resolve(AMBIGUOUS)
 
 
 def test_an_expected_harness_still_wins_over_the_tree(monkeypatch):
-    monkeypatch.setattr(identity, "walk_to_harness",
-                        lambda pid: ("claude", 111))
+    monkeypatch.setattr(identity, "ancestry",
+                        lambda pid: _chain(CLAUDE_IN_CODEX))
     assert identity.resolve(AMBIGUOUS, "codex").session_key == "codex:t-child"
+
+
+# --- process inspection without exec (amail-svb) ---------------------------
+
+def test_kinfo_matches_ps_for_a_real_process():
+    import subprocess as sp
+    proc = sp.Popen(["/bin/sleep", "30"])
+    try:
+        info = identity.kinfo(proc.pid)
+        assert info is not None
+        assert info.comm == "sleep"
+        assert info.ppid == os.getpid()
+        expected = sp.run(["/bin/ps", "-o", "lstart=", "-p", str(proc.pid)],
+                          capture_output=True, text=True).stdout.strip()
+        assert info.start == expected      # stored rows need no migration
+    finally:
+        proc.kill()
+        proc.wait()
+
+
+def test_kinfo_returns_none_for_a_dead_pid():
+    assert identity.kinfo(2 ** 22) is None
+
+
+def test_ancestry_starts_at_the_given_pid_and_climbs():
+    chain = identity.ancestry(os.getpid())
+    assert chain[0].pid == os.getpid()
+    assert chain[1].pid == os.getppid()
+
+
+# Claude execs a versioned binary, so its comm is a version string, never
+# "claude"; only CLAUDE_PID identifies it. Codex's comm starts with "codex".
+CODEX_IN_CLAUDE = [("me", 10), ("zsh", 11), ("codex", 12), ("zsh", 13),
+                   ("2.1.263", 14)]
+CLAUDE_IN_CODEX = [("me", 10), ("zsh", 11), ("2.1.263", 14), ("zsh", 15),
+                   ("codex", 12)]
+
+
+def _chain(pairs):
+    return [identity.Proc(pid, comm, 0, "") for comm, pid in pairs]
+
+
+def test_nearest_ancestor_wins_in_both_nesting_directions():
+    env = {"CLAUDE_PID": "14"}
+    both = {"claude", "codex"}
+    assert identity._nearest_harness(env, both,
+                                     _chain(CODEX_IN_CLAUDE)) == "codex"
+    assert identity._nearest_harness(env, both,
+                                     _chain(CLAUDE_IN_CODEX)) == "claude"
+
+
+def test_an_unrecognisable_ancestry_decides_nothing():
+    assert identity._nearest_harness({"CLAUDE_PID": "99"}, {"claude", "codex"},
+                                     _chain([("me", 10), ("zsh", 11)])) is None

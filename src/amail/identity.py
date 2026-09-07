@@ -7,9 +7,12 @@ inherited a Claude session's env must never adopt the parent's mailbox.
 """
 from __future__ import annotations
 
+import ctypes
 import os
+import struct
 import subprocess
-from collections.abc import Mapping
+import time
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
 HARNESS_BINARIES = {"claude": "claude", "codex": "codex", "pi": "pi"}
@@ -18,9 +21,9 @@ PS = "/bin/ps"          # absolute: a GUI-launched harness has a stripped PATH
 
 
 class InspectionUnavailable(RuntimeError):
-    """`ps` could not be executed at all — a sandbox denied it, or it is
-    missing. Distinct from "ps ran and the pid is gone": we know nothing,
-    and a caller must not mistake that for a dead process."""
+    """This process could not be inspected at all — a sandbox denied it, or
+    the mechanism is missing. Distinct from "we looked and the pid is gone":
+    we know nothing, and a caller must not mistake that for a dead process."""
 
 
 def _ps(pid: int, field: str) -> str:
@@ -30,6 +33,69 @@ def _ps(pid: int, field: str) -> str:
     except OSError as e:
         raise InspectionUnavailable(
             f"cannot run {PS}: {e.strerror or e}") from e
+
+
+# --- process inspection without exec ---------------------------------------
+#
+# Codex runs its commands under a seatbelt profile that denies exec of
+# /bin/ps, which is exactly where we most need to know who our harness is.
+# The same facts come out of sysctl(KERN_PROC_PID), which that profile does
+# allow, and which costs no subprocess.
+
+_CTL_KERN, _KERN_PROC, _KERN_PROC_PID = 1, 14, 1
+_KINFO_SIZE = 648                  # sizeof(struct kinfo_proc), arm64/x86_64
+_OFF_START, _OFF_COMM, _OFF_PPID = 0, 243, 560
+_COMM_LEN = 17                     # MAXCOMLEN + 1
+
+_libc = ctypes.CDLL(None, use_errno=True)
+_libc.sysctl.argtypes = [ctypes.POINTER(ctypes.c_int), ctypes.c_uint,
+                         ctypes.c_void_p, ctypes.POINTER(ctypes.c_size_t),
+                         ctypes.c_void_p, ctypes.c_size_t]
+
+
+@dataclass(frozen=True)
+class Proc:
+    pid: int
+    comm: str
+    ppid: int
+    start: str
+    """Formatted exactly as `ps -o lstart=` renders it, so rows written by
+    either mechanism compare equal and need no migration."""
+
+
+def kinfo(pid: int) -> Proc | None:
+    """One process, or None if there is no such pid. Raises
+    InspectionUnavailable if the kernel will not answer at all."""
+    mib = (ctypes.c_int * 4)(_CTL_KERN, _KERN_PROC, _KERN_PROC_PID, pid)
+    buf = ctypes.create_string_buffer(_KINFO_SIZE)
+    size = ctypes.c_size_t(_KINFO_SIZE)
+    if _libc.sysctl(mib, 4, buf, ctypes.byref(size), None, 0) != 0:
+        err = ctypes.get_errno()
+        raise InspectionUnavailable(f"sysctl(kern.proc.pid): {os.strerror(err)}")
+    if size.value == 0:
+        return None                                   # no such process
+    if size.value != _KINFO_SIZE:                     # never trust the offsets
+        raise InspectionUnavailable(
+            f"unexpected kinfo_proc size {size.value}")
+    sec, = struct.unpack_from("<q", buf.raw, _OFF_START)
+    comm = buf.raw[_OFF_COMM:_OFF_COMM + _COMM_LEN].split(b"\0", 1)[0]
+    ppid, = struct.unpack_from("<i", buf.raw, _OFF_PPID)
+    return Proc(pid, comm.decode(errors="replace"), ppid,
+                time.strftime("%a %b %e %H:%M:%S %Y", time.localtime(sec)))
+
+
+def ancestry(pid: int) -> list[Proc]:
+    """`pid` and its ancestors, nearest first, stopping at init."""
+    chain: list[Proc] = []
+    for _ in range(40):
+        info = kinfo(pid)
+        if info is None:
+            break
+        chain.append(info)
+        if info.ppid <= 1:
+            break
+        pid = info.ppid
+    return chain
 
 
 @dataclass(frozen=True)
@@ -47,8 +113,12 @@ class SessionIdentity:
 
 def pid_start(pid: int) -> str | None:
     """The process start time, or None if no such process. Raises
-    InspectionUnavailable when ps itself cannot run."""
-    return _ps(pid, "lstart") or None
+    InspectionUnavailable when the process cannot be inspected at all."""
+    try:
+        info = kinfo(pid)
+    except InspectionUnavailable:
+        return _ps(pid, "lstart") or None          # non-Darwin, or odd kernel
+    return info.start if info else None
 
 
 def pid_alive(pid: int, expected_start: str) -> bool:
@@ -126,6 +196,27 @@ NATIVE_PROBES = {"claude": _probe_claude, "codex": _probe_codex}
 _PROBE_ORDER = (_probe_claude, _probe_codex)
 
 
+def _nearest_harness(env: Mapping[str, str], claimants: set[str],
+                     chain: Sequence[Proc]) -> str | None:
+    """Which claimant owns the *nearest* ancestor. Nearest is what matters:
+    codex-in-claude and claude-in-codex are both real nestings, and only
+    distance tells them apart.
+
+    Claude is matched by pid, not by name: its launcher execs a versioned
+    binary, so its comm is a version string like "2.1.263" and never
+    "claude". CLAUDE_PID is exported in both nesting directions.
+    """
+    claude_pid = None
+    if "claude" in claimants and env.get("CLAUDE_PID", "").isdigit():
+        claude_pid = int(env["CLAUDE_PID"])
+    for proc in chain:
+        if claude_pid is not None and proc.pid == claude_pid:
+            return "claude"
+        if "codex" in claimants and proc.comm.startswith("codex"):
+            return "codex"
+    return None
+
+
 def _first_hit(env: Mapping[str, str],
                expect_harness: str | None) -> Probe | None:
     explicit = _probe_explicit(env)
@@ -147,11 +238,11 @@ def _first_hit(env: Mapping[str, str],
     # its own, so probe order alone would hand it the parent's mailbox. Env is
     # inheritable; the process tree is not, so let the tree decide.
     try:
-        found = walk_to_harness(os.getpid())
+        nearest = _nearest_harness(env, set(hits), ancestry(os.getpid()))
     except InspectionUnavailable:
-        found = None
-    if found is not None and found[0] in hits:
-        return hits[found[0]]
+        nearest = None
+    if nearest is not None:
+        return hits[nearest]
     raise IdentityConflict(                    # never log env contents here
         f"this environment names {', '.join(sorted(hits))} at once and the"
         f" process tree does not say which is real; scrub the inherited"

@@ -77,8 +77,20 @@ suite still passes.
   or re-block a stop; genuinely new mail must. Announcement state is bookkeeping and
   never hides unread mail from `amail inbox`.
 - **Messages bind to agent ids.** Names are display labels, recycled after death, and are
-  never caller identity. Caller identity is a validated `AMAIL_AGENT_ID` or the native
-  session key; a conflict between them raises, it does not pick a winner.
+  never caller identity. Caller identity is the native session key; `AMAIL_AGENT_ID` is a
+  cross-check on it, never a substitute. The pin is inherited by every process a session
+  launches, so in a nested session a pin naming someone else is normal, not an anomaly:
+  when the two disagree and this session has its own mailbox, native wins and the stale
+  pin is dropped. When the pin is the *only* claim to a mailbox and it is not ours, that
+  raises. It never picks a winner between two live claims.
+- **The process tree decides who the harness is.** Environment variables are inherited by
+  everything a session launches — a Codex session started from a Claude session's shell
+  carries `CLAUDE_*` *and* exports `CODEX_THREAD_ID` — so when more than one harness
+  claims the environment, the *nearest* ancestor wins. Ancestry is read with
+  `sysctl(KERN_PROC_PID)`, not `ps`: Codex's sandbox denies exec of `/bin/ps`, which is
+  exactly where the question matters. Claude is matched by `CLAUDE_PID`, never by process
+  name — its launcher execs a versioned binary, so its `comm` is a version string. An
+  ancestry that names nobody raises rather than guessing.
 - **A mailbox outlives its endpoint.** Re-registering a `session_key` — including an
   offline one — revives the same agent id. Reaping marks endpoints offline; it never
   destroys mailboxes.

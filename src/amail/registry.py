@@ -122,29 +122,34 @@ def current_agent(conn: sqlite3.Connection, env: Mapping[str, str],
         native_row = conn.execute(
             "SELECT * FROM agents WHERE session_key = ?",
             (ident.session_key,)).fetchone()
+    except identity.IdentityConflict as e:
+        # The environment is genuinely ambiguous. A pin cannot rescue that --
+        # it is inherited by every descendant just like the variables that
+        # made it ambiguous -- so report the real reason.
+        raise LookupError(str(e)) from e
     except RuntimeError:
-        pass
+        pass                              # unresolvable, but not contradictory
     if "AMAIL_AGENT_ID" in env:
         pinned = int(env["AMAIL_AGENT_ID"])
         row = conn.execute("SELECT * FROM agents WHERE id = ?",
                            (pinned,)).fetchone()
         if row is None:
             raise LookupError(f"AMAIL_AGENT_ID={pinned} does not exist")
-        if native_row is not None and native_row["id"] != pinned:
-            raise LookupError(
-                f"identity conflict: AMAIL_AGENT_ID={pinned} but this"
-                f" session's mailbox is agent {native_row['id']}")
-        # No mailbox for this session yet: a resumed Codex thread gets a new
-        # id. The pin is then the ONLY identity claim, so it has to be checked
-        # against who we actually are -- an inherited pin from the session
-        # that launched us names a real agent and would otherwise win.
-        if (native_row is None and ident is not None and ident.native
-                and row["session_key"] != ident.session_key):
+        # AMAIL_AGENT_ID is inherited by everything a session launches, so a
+        # pin naming another session is the normal case in a nested session,
+        # not an anomaly. It is a cross-check on the harness's own statement
+        # of who it is, never a substitute for it: when the two disagree,
+        # native identity wins and the stale pin is simply dropped.
+        if ident is None or not ident.native:
+            return _row_to_agent(row)     # nothing to check the pin against
+        if row["session_key"] == ident.session_key:
+            return _row_to_agent(row)
+        if native_row is None:
+            # The pin is the only claim to a mailbox and it is not ours.
             raise LookupError(
                 f"identity conflict: AMAIL_AGENT_ID={pinned} is a"
                 f" {row['harness']} mailbox but this session resolves to"
                 f" {ident.harness}; scrub the inherited variable or register")
-        return _row_to_agent(row)
     return _row_to_agent(native_row) if native_row else None
 
 
