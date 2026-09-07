@@ -7,7 +7,7 @@ import os
 import sys
 from collections.abc import Mapping
 
-from amail import db, mail, registry, routing, waiter
+from amail import db, doctor, mail, registry, routing, waiter
 
 
 def _require_agent(conn, env):
@@ -53,6 +53,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_read.add_argument("id", type=int)
     p_wait = sub.add_parser("wait")
     p_wait.add_argument("--timeout", type=float, default=None)
+    sub.add_parser("doctor")
     p_hook = sub.add_parser("hook")
     p_hook.add_argument("harness")
     p_hook.add_argument("event")
@@ -210,5 +211,13 @@ def dispatch(args, conn, env, home) -> int:
         for h in headers:
             print(routing.header_line(h))
         print("when done triaging, re-arm with: amail wait")
+        return 0
+    if args.command == "doctor":
+        checks = doctor.report(conn, env, home)
+        if args.json:
+            print(json.dumps(dict(checks)))
+        else:
+            for check, result in checks:
+                print(f"{check}: {result}")
         return 0
     return 1
