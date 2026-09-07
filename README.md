@@ -10,7 +10,9 @@ daemon, no network.
     amail send curie "about to merge to main, are you touching it?" --priority 1
     amail inbox
 
-Status: implemented — four-surface MVP (Claude Code CLI/Desktop, Codex
-CLI/Desktop), Pi pending. Live-harness gates: [docs/acceptance-gates.md](docs/acceptance-gates.md).
+Status: implemented and installed; live-harness verification so far covers
+Claude Code CLI only (identity, idle delivery, stop backstop, resume). The
+four-surface MVP claim (Claude Code CLI/Desktop, Codex CLI/Desktop) waits on the
+remaining gates; Pi is deferred. Live-harness gates: [docs/acceptance-gates.md](docs/acceptance-gates.md).
 Install: [docs/install.md](docs/install.md).
 Design: [docs/plans/2026-09-06_agent-mail-design.md](docs/plans/2026-09-06_agent-mail-design.md).
