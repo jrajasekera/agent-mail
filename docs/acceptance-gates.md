@@ -137,9 +137,10 @@ Not yet run, and why:
 
 - **Gate 4 on Codex Desktop** — the CLI passed 2026-09-07 (above); Desktop is still
   unrun.
-- **Gates 5, 7, 9, 11** — need a second live session mid-turn, a session started
+- **Gates 5, 7, 9, 11** — needed a second live session mid-turn, a session started
   with `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1`, each harness's real sandbox
-  profile, and an interactive Codex trust approval, respectively.
+  profile, and an interactive Codex trust approval, respectively. **All four run
+  2026-09-07; see the last section of this file.**
 - **Claude Desktop, Codex CLI, Codex Desktop** — no gate has been run on those
   three surfaces yet. The MVP claim covers Claude Code CLI only until they are.
 
@@ -259,3 +260,83 @@ identity bug every previous time.
 
 Incidentally this is a third clean `codex resume` that preserved the thread id
 and mailbox, which is the evidence closing `amail-up1`.
+
+### 2026-09-07 — Claude Code CLI, gates 5, 7 and 9; Codex CLI, gate 11 (`amail-87p`)
+
+Harness: Claude Code CLI 2.1.263 and codex-cli 0.153.4, macOS 25.5.0. amail 0.1.0
+(`uv tool install --reinstall --refresh`). Every receiver was a real interactive TUI in a
+detached tmux pane, driven only by typed prompts; the sender throughout was this Claude
+Code session, `avogadro@68`.
+
+| # | Gate | Surface | Result |
+|---|---|---|---|
+| 5 | Active-turn delivery | Claude CLI | **PASS.** |
+| 7 | Fallback on disabled push | Claude CLI | **PASS**, after a doctor fix. |
+| 9 | Sandbox/permissions | Claude CLI | **PASS.** |
+| 11 | Codex hook trust | Codex CLI | **PASS.** |
+
+**Gate 5 — active-turn delivery, `hooke@73`.** The receiver armed `amail wait
+--timeout 600` as a background task and then ran an eight-step sequence of ~15s shell
+commands. Three messages were sent back to back mid-sequence (ids 14, 15, 16). Observed:
+
+- **No interruption.** The running turn was never aborted or restarted. All eight steps
+  ran in order and the turn completed normally 2m 37s in.
+- **No storm: three messages produced two wake events, not three.** `message_recipients`
+  shows msg 14 announced at 20:12:33 and msgs **15 and 16 announced together** at
+  20:12:57 — the second waiter fire batched both, because `mail.unannounced` returns the
+  whole pending set and `mark_announced` marks it in one call.
+- **Delivery landed at a tool boundary.** The completed background task surfaced between
+  two shell calls; the model triaged msg 14, re-armed, and explicitly deferred the second
+  batch ("I'll triage the new mail after finishing the sequence"), reading 15 and 16 at
+  20:14:26 once the sequence was done. Metadata only in every notification.
+
+**Gate 7 — `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1`, `franklin@69`.** Registration via
+SessionStart still worked. The degradation is sharper than "push is disabled":
+
+- **The Bash tool's schema loses its `run_in_background` parameter entirely.** The
+  receiver reported it verbatim: "no `run_in_background` parameter in its schema (only
+  command, description, timeout, dangerouslyDisableSandbox)". `amail wait` therefore ran
+  as an ordinary foreground child — `ps` confirmed pid 63987 (`amail wait --timeout 240`)
+  as a direct descendant of the session's pid 62226 — and **blocks the turn for its whole
+  timeout**. It is not refused, and the waiter lock is still written, so from outside the
+  session `doctor` would have said "armed" while the session sat frozen.
+- **Mail still surfaces via hooks.** With no watcher armed, msg 13 was sent and the next
+  turn end fired the Stop hook: the stop was blocked and the metadata header plus the
+  unarmed-watcher note reached the model — no body. The model surfaced both pending
+  messages to its operator and declined to re-arm, correctly explaining why.
+- **`amail doctor` did not explain any of this** — it reported a bare `watcher: not
+  armed`, which reads as operator oversight rather than a harness limit. Fixed in the
+  same session (`doctor.BACKGROUND_TASKS_OFF`, two tests) and re-verified live in the
+  same receiver, which now prints:
+
+  ```
+  background tasks: CLAUDE_CODE_DISABLE_BACKGROUND_TASKS is set, so the Bash tool has
+  no run_in_background parameter and `amail wait` can only run in the foreground,
+  blocking the turn for its whole timeout; mail still arrives, one turn later, through
+  the Stop hook
+  ```
+
+**Gate 9 — Claude Code's real permission profile, `leibniz@74`.** Session started with no
+`--permission-mode` flag, so it ran under this machine's configured
+`defaultMode: "auto"`. `register` (via the SessionStart hook), `whoami`, `doctor`,
+`inbox`, `read 17` and `send --to-id 68` all ran from the sandboxed Bash tool with **no
+permission prompt, no sandbox denial and no escalation**; the reply arrived as msg 18.
+`~/.amail` needs no allowance on this surface. This is the counterpart to the Codex CLI
+result recorded above, where `workspace-write` *does* need
+`writable_roots = ["~/.amail"]`. Not covered: a session pinned to the stricter default
+`ask` mode, which would prompt for Bash generally rather than for `~/.amail` specifically.
+
+**Gate 11 — Codex hook trust survives a wrapper-script edit, `/tmp/amail-gate11`.**
+Baseline: a session in a freshly trusted directory registered `babbage@75` on its first
+turn, and `/hooks` reported `SessionStart 2 installed / 2 active`, `Stop 2 / 2` — no
+"needs review". `hooks/amail-hook.sh` was then edited in place (md5
+`4e62b63a…` → `3f0f7bbd…`, a line appended to the body; the `hooks.json` command line
+untouched). A new session in the same directory **still ran the hook**: it registered
+`ampere@76`, `/hooks` still showed 2 / 2 active, and `~/.amail/hook.log` gained no entry.
+
+**The trust is keyed on the configured command line, not on the script's contents.** That
+is the property the shim was designed for, now verified rather than assumed; the comment
+at the top of `hooks/amail-hook.sh` records it.
+
+Still open after this session: gate 4 on Codex Desktop, gate 10 on a genuinely
+Dock-launched app, and every gate on Claude Desktop.
