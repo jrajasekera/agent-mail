@@ -189,3 +189,37 @@ Under the default `workspace-write` sandbox:
   verified under `sandbox-exec` profiles denying `file-write-mode` on `~/.amail`
   and denying `/bin/ps` exec, `whoami`, `roster`, `inbox` and `doctor` all work,
   nothing is falsely reaped, and `register` refuses with one clear line.
+
+### 2026-09-07 — Codex CLI, identity inside a nested session (`amail-svb`, `amail-b8o`)
+
+Harness: codex-cli 0.153.4. A Codex session started from a Claude session's Bash
+tool — the ordinary way one agent launches another.
+
+**Before.** `amail doctor` inside that Codex session reported
+`identity: claude:58a3f59d-… / agent: hilbert@48`, the *parent Claude* session,
+because `CLAUDE_*` is inherited and was probed before the `CODEX_THREAD_ID` that
+Codex does export. Both `amail read` and `amail send` acted as the wrong agent.
+
+**After.** Same nesting, with `writable_roots` per gate 9:
+
+```
+identity: codex:01a07d5a-e82a-7e82-9ff3-7f6f071642e7 (pid 35902)
+agent: halley@62
+mailbox: /Users/jrajasekera/.amail/mail.db (writable)
+halley@62  codex  working  /tmp/amail-3rp-live
+```
+
+Two facts made this work, both verified here rather than assumed:
+
+- **Codex's seatbelt denies exec of `/bin/ps`**, so the process tree — the only
+  signal that is not inherited — cannot be read the way amail read it. Ancestry
+  now comes from `sysctl(KERN_PROC_PID)` through ctypes, which the same profile
+  allows. Offsets are guarded at runtime (`sizeof(kinfo_proc) == 648`) and
+  checked by a test that spawns a process and compares `comm`, `ppid` and
+  `lstart` against `ps`; `lstart` is byte-identical, so stored rows are unchanged.
+- **Claude's `comm` is a version string** (`2.1.263` for the ancestor observed
+  here, pid 86257 == `CLAUDE_PID`), never `claude` — `ps -o comm=` only shows
+  `claude` because it reads `argv[0]` from `kern.procargs2`, which Codex's
+  profile does not allow. Claude is matched by `CLAUDE_PID`; Codex by a `comm`
+  starting with `codex`. Nearest ancestor wins, so both nesting directions
+  resolve correctly.
