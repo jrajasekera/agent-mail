@@ -129,7 +129,7 @@ def _ps_field(pid: int, field: str) -> str:
     return _ps(pid, field)
 
 
-def walk_to_harness(pid: int) -> tuple[str, int] | None:
+def _walk_with_ps(pid: int) -> tuple[str, int] | None:
     for _ in range(20):
         comm = os.path.basename(_ps_field(pid, "comm"))
         for harness, binary in HARNESS_BINARIES.items():
@@ -139,6 +139,31 @@ def walk_to_harness(pid: int) -> tuple[str, int] | None:
         if not ppid_s or ppid_s == "0":
             return None
         pid = int(ppid_s)
+    return None
+
+
+def walk_to_harness(pid: int) -> tuple[str, int] | None:
+    """The nearest ancestor that *is* a harness process, by executable name.
+
+    Read through sysctl, not ps. This is the only signal a Codex session has
+    for its own harness pid — `CODEX_THREAD_ID` names the thread, nothing
+    names the process — and it is read from inside Codex's sandbox, which
+    denies exec of /bin/ps. Walking with ps there does not fail loudly: the
+    caller falls back to `os.getppid()`, the sandbox shell that exits a
+    moment later, and the next reap marks a live session offline.
+
+    Names are compared exactly against the kernel's `p_comm`, so the helper
+    processes a harness spawns beside itself (`codex-code-mode-host`) do not
+    shadow the session process.
+    """
+    try:
+        chain = ancestry(pid)
+    except InspectionUnavailable:
+        return _walk_with_ps(pid)         # non-Darwin, or an odd kernel
+    for proc in chain:
+        for harness, binary in HARNESS_BINARIES.items():
+            if proc.comm == binary:
+                return harness, proc.pid
     return None
 
 

@@ -1,8 +1,11 @@
 import os
+import pathlib
+import subprocess
 
 import pytest
 
 from amail import identity, registry
+from tests.conftest import clean_env
 
 
 def test_claude_env_vars_win_and_namespace():
@@ -221,3 +224,47 @@ def test_nearest_ancestor_wins_in_both_nesting_directions():
 def test_an_unrecognisable_ancestry_decides_nothing():
     assert identity._nearest_harness({"CLAUDE_PID": "99"}, {"claude", "codex"},
                                      _chain([("me", 10), ("zsh", 11)])) is None
+
+
+WALK_IN_CHILD = """
+import os, sys
+sys.path.insert(0, os.environ["AMAIL_SRC"])
+from amail import identity
+identity.PS = "/nonexistent/ps"        # any exec of ps now fails, as in Codex
+shell = identity.kinfo(os.getppid())   # whatever `sh` really is on this box
+identity.HARNESS_BINARIES["harness-under-test"] = shell.comm
+print(identity.walk_to_harness(os.getpid())
+      == ("harness-under-test", shell.pid))
+"""
+
+
+def test_walk_to_harness_finds_the_ancestor_without_ps(tmp_path):
+    """Codex's seatbelt denies exec of /bin/ps, and that is exactly where a
+    Codex session must find its own harness pid: CODEX_THREAD_ID names the
+    thread, but no env var names the process. Walking with ps there makes
+    `_probe_codex` fall back to `os.getppid()` — the sandbox shell that
+    spawned amail, which exits a moment later — so the agent row points at a
+    dead pid and the next reap marks a fully live session offline.
+
+    The walk must use the same sysctl ancestry that profile does allow.
+    """
+    script = tmp_path / "walk.py"
+    script.write_text(WALK_IN_CHILD)
+    env = {**clean_env(),
+           "AMAIL_SRC": str(pathlib.Path(identity.__file__).parent.parent)}
+    # the trailing `:` stops sh from exec-ing python over itself, so it stays
+    # a live ancestor — the shape of a harness running a command
+    out = subprocess.run(["/bin/sh", "-c", f"python3 {script}; :"],
+                         capture_output=True, text=True, env=env)
+    assert out.returncode == 0, out.stderr
+    assert out.stdout.strip() == "True", out.stdout
+
+
+def test_codex_helper_processes_do_not_shadow_the_session_process(monkeypatch):
+    """Codex spawns `codex-code-mode-host` beside itself, so it sits between
+    a command and the session process in the chain. `p_comm` is truncated to
+    16 characters, which makes a prefix test match it — the exact comparison
+    is what keeps the harness pid pointing at the session."""
+    monkeypatch.setattr(identity, "ancestry", lambda pid: _chain(
+        [("python3", 10), ("codex-code-mode-", 11), ("codex", 12)]))
+    assert identity.walk_to_harness(10) == ("codex", 12)
