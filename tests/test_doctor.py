@@ -38,3 +38,37 @@ def test_codex_with_thread_id_gets_no_first_turn_note(home, conn):
     env = {"AMAIL_HOME": str(home), "CODEX_THREAD_ID": "th-1",
            "AMAIL_PID": str(os.getpid())}
     assert "codex mailbox" not in dict(doctor.report(conn, env, home))
+
+
+def test_doctor_reports_cannot_verify_when_ps_is_denied(conn, home,
+                                                        monkeypatch):
+    from amail import identity
+
+    def refuse(*a, **k):
+        raise PermissionError(1, "Operation not permitted", "ps")
+
+    monkeypatch.setattr(identity.subprocess, "run", refuse)
+    checks = dict(doctor.report(conn, {"AMAIL_HOME": str(home)}, home))
+    assert checks                       # a traceback would never get here
+
+
+def test_doctor_still_reports_when_the_mailbox_cannot_be_opened(home, capsys,
+                                                                monkeypatch):
+    """amail-g31: doctor is the tool that explains a degraded mailbox, so it
+    must survive one it cannot open."""
+    from amail import cli, db
+
+    def refuse(home_):
+        raise db.MailboxUnavailable(
+            f"cannot open {home_ / 'mail.db'}: unable to open database file")
+
+    monkeypatch.setattr(db, "connect", refuse)
+    rc = cli.main(["doctor"], {"AMAIL_HOME": str(home),
+                               "CODEX_THREAD_ID": "t-1", "AMAIL_PID": "1",
+                               "AMAIL_PID_START": "t",
+                               "CODEX_SANDBOX": "seatbelt"})
+    out = capsys.readouterr().out
+    assert rc == 1
+    assert "unable to open database file" in out
+    assert "writable_roots" in out          # names the actual fix
+    assert "Traceback" not in out

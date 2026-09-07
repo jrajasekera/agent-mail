@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 
 from amail import db
@@ -59,3 +61,27 @@ def test_concurrent_connects_do_not_fail(home):
     for t in threads:
         t.join()
     assert not errors, errors
+
+
+def test_existing_private_home_is_not_chmodded(tmp_path, monkeypatch):
+    """A sandbox can forbid chmod on a directory it did not create; amail must
+    not touch the mode of a home that is already private."""
+    env = {"AMAIL_HOME": str(tmp_path / "h")}
+    db.amail_home(env)
+
+    def refuse(*a, **k):
+        raise PermissionError(1, "Operation not permitted")
+
+    monkeypatch.setattr(Path, "chmod", refuse)
+    assert db.amail_home(env) == (tmp_path / "h")
+
+
+def test_unusable_home_raises_a_clean_error(tmp_path, monkeypatch):
+    def refuse(*a, **k):
+        raise PermissionError(1, "Operation not permitted")
+
+    monkeypatch.setattr(Path, "mkdir", refuse)
+    with pytest.raises(db.HomeUnusable) as e:
+        db.amail_home({"AMAIL_HOME": str(tmp_path / "h")})
+    assert str(tmp_path / "h") in str(e.value)
+    assert "\n" not in str(e.value)

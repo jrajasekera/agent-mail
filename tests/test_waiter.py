@@ -66,3 +66,13 @@ def test_wait_is_singleton_per_agent(home, conn):
     assert waiter.wait(conn, bob, home, timeout=0.2,
                        poll_interval=0.1) == []
     assert not lock.exists()
+
+
+def test_eperm_means_alive_not_dead(monkeypatch):
+    """EPERM from kill(pid, 0) means the process exists and we may not signal
+    it — treating that as 'gone' lets a second waiter steal a live lock."""
+    def eperm(pid, sig):
+        raise PermissionError(1, "Operation not permitted")
+
+    monkeypatch.setattr(waiter.os, "kill", eperm)
+    assert waiter._pid_running(4242) is True

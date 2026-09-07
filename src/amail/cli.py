@@ -6,6 +6,7 @@ import json
 import os
 import sys
 from collections.abc import Mapping
+from pathlib import Path
 
 from amail import db, doctor, mail, registry, routing, waiter
 
@@ -79,8 +80,16 @@ def main(argv: list[str] | None = None,
         except Exception as e:
             hooks.log_failure(env, e)
             return 0
-    home = db.amail_home(env)
-    conn = db.connect(home)
+    try:
+        home = db.amail_home(env)
+        conn = db.connect(home)
+    except db.MailboxUnavailable as e:
+        if args.command == "doctor":       # the one command that must answer
+            _print_doctor(doctor.report(None, env, _home_path(env), str(e)),
+                          args.json)
+            return 1
+        print(f"amail: {e}", file=sys.stderr)
+        return 1
     try:
         return dispatch(args, conn, env, home)
     finally:
@@ -89,7 +98,11 @@ def main(argv: list[str] | None = None,
 
 def dispatch(args, conn, env, home) -> int:
     if args.command == "register":
-        agent = registry.register(conn, env, home)
+        try:
+            agent = registry.register(conn, env, home)
+        except RuntimeError as e:
+            print(f"amail: {e}", file=sys.stderr)
+            return 1
         print(json.dumps(_agent_dict(agent)) if args.json
               else registry.handle(agent))
         return 0
@@ -215,11 +228,18 @@ def dispatch(args, conn, env, home) -> int:
         print("when done triaging, re-arm with: amail wait")
         return 0
     if args.command == "doctor":
-        checks = doctor.report(conn, env, home)
-        if args.json:
-            print(json.dumps(dict(checks)))
-        else:
-            for check, result in checks:
-                print(f"{check}: {result}")
+        _print_doctor(doctor.report(conn, env, home), args.json)
         return 0
     return 1
+
+
+def _home_path(env: Mapping[str, str]) -> Path:
+    return Path(env.get("AMAIL_HOME", "~/.amail")).expanduser()
+
+
+def _print_doctor(checks, as_json: bool) -> None:
+    if as_json:
+        print(json.dumps(dict(checks)))
+        return
+    for check, result in checks:
+        print(f"{check}: {result}")

@@ -14,22 +14,41 @@ from dataclasses import dataclass
 
 HARNESS_BINARIES = {"claude": "claude", "codex": "codex", "pi": "pi"}
 
+PS = "/bin/ps"          # absolute: a GUI-launched harness has a stripped PATH
+
+
+class InspectionUnavailable(RuntimeError):
+    """`ps` could not be executed at all — a sandbox denied it, or it is
+    missing. Distinct from "ps ran and the pid is gone": we know nothing,
+    and a caller must not mistake that for a dead process."""
+
+
+def _ps(pid: int, field: str) -> str:
+    try:
+        return subprocess.run([PS, "-o", f"{field}=", "-p", str(pid)],
+                              capture_output=True, text=True).stdout.strip()
+    except OSError as e:
+        raise InspectionUnavailable(
+            f"cannot run {PS}: {e.strerror or e}") from e
+
 
 @dataclass(frozen=True)
 class SessionIdentity:
     harness: str
     session_key: str
     pid: int
-    pid_start: str
+    pid_start: str | None
+    """None when process inspection is unavailable here. Enough to identify an
+    existing mailbox (that is the session_key's job); not enough to open one."""
     native: bool = True
     """False when the harness was inferred from pid ancestry rather than
     named by the session itself. A guess is not grounds to reject a pin."""
 
 
 def pid_start(pid: int) -> str | None:
-    out = subprocess.run(["ps", "-o", "lstart=", "-p", str(pid)],
-                         capture_output=True, text=True).stdout.strip()
-    return out or None
+    """The process start time, or None if no such process. Raises
+    InspectionUnavailable when ps itself cannot run."""
+    return _ps(pid, "lstart") or None
 
 
 def pid_alive(pid: int, expected_start: str) -> bool:
@@ -37,8 +56,7 @@ def pid_alive(pid: int, expected_start: str) -> bool:
 
 
 def _ps_field(pid: int, field: str) -> str:
-    return subprocess.run(["ps", "-o", f"{field}=", "-p", str(pid)],
-                          capture_output=True, text=True).stdout.strip()
+    return _ps(pid, field)
 
 
 def walk_to_harness(pid: int) -> tuple[str, int] | None:
@@ -56,15 +74,21 @@ def walk_to_harness(pid: int) -> tuple[str, int] | None:
 
 def _finish(env: Mapping[str, str], harness: str, native_key: str,
             pid: int, native: bool = True) -> SessionIdentity:
-    start = env.get("AMAIL_PID_START") or pid_start(pid)
-    if start is None:
-        raise RuntimeError(f"cannot determine start time of pid {pid}")
+    start = env.get("AMAIL_PID_START")
+    if not start:
+        try:
+            start = pid_start(pid)
+        except InspectionUnavailable:
+            start = None          # identity still resolves; registration will not
     return SessionIdentity(harness, f"{harness}:{native_key}", pid, start,
                            native)
 
 
 def _fallback_pid() -> int:
-    found = walk_to_harness(os.getpid())
+    try:
+        found = walk_to_harness(os.getpid())
+    except InspectionUnavailable:
+        return os.getppid()
     return found[1] if found else os.getppid()
 
 
@@ -112,11 +136,26 @@ def _first_hit(env: Mapping[str, str],
         hit = preferred(env)
         if hit is not None:
             return hit
-    for probe in _PROBE_ORDER:
-        hit = probe(env)
-        if hit is not None:
-            return hit
-    return None
+    hits = {h: probe(env) for h, probe in NATIVE_PROBES.items()}
+    hits = {h: v for h, v in hits.items() if v is not None}
+    if len(hits) == 1:
+        return next(iter(hits.values()))
+    if not hits:
+        return None
+    # Two harnesses claim this environment. A Codex session launched from a
+    # Claude session's shell inherits CLAUDE_* and exports CODEX_THREAD_ID of
+    # its own, so probe order alone would hand it the parent's mailbox. Env is
+    # inheritable; the process tree is not, so let the tree decide.
+    try:
+        found = walk_to_harness(os.getpid())
+    except InspectionUnavailable:
+        found = None
+    if found is not None and found[0] in hits:
+        return hits[found[0]]
+    raise IdentityConflict(                    # never log env contents here
+        f"this environment names {', '.join(sorted(hits))} at once and the"
+        f" process tree does not say which is real; scrub the inherited"
+        f" variables or set AMAIL_SESSION_KEY")
 
 
 def resolve(env: Mapping[str, str],
@@ -125,7 +164,11 @@ def resolve(env: Mapping[str, str],
     if hit is not None:
         ident = _finish(env, *hit)
     else:
-        found = walk_to_harness(os.getpid())
+        try:
+            found = walk_to_harness(os.getpid())
+        except InspectionUnavailable as e:
+            raise InspectionUnavailable(          # nothing else identifies us
+                f"no harness environment variables and {e}") from e
         if found:
             harness, pid = found
         else:

@@ -115,3 +115,25 @@ def test_cli_send_inbox_read(home, capsys, tmp_path):
     out = capsys.readouterr().out
     assert "message from agent" in out and "ping" in out
     assert "re-arm" not in out                       # batch-level, not per-read
+
+
+def test_offline_codex_agent_is_still_a_push_target(conn):
+    """amail-3rp: `codex queue` is durable across a stopped process, so an
+    offline codex_queue route is exactly the case push exists for. A doorbell
+    write to an offline claude session, by contrast, has no reader."""
+    alice = make_agent(conn, "s-a")
+    codex_env = {"CODEX_THREAD_ID": "t-dead", "AMAIL_PID": "11",
+                 "AMAIL_PID_START": "bogus"}
+    dead_codex = registry.register(conn, codex_env, expect_harness="codex")
+    dead_claude = registry.register(conn, {
+        "CLAUDE_CODE_SESSION_ID": "s-dead", "CLAUDE_PID": "11",
+        "AMAIL_PID_START": "bogus"})
+    registry.reap(conn)
+
+    _, targets, warning = mail.send(conn, alice, dead_codex.name, "ping")
+    assert [t.id for t in targets] == [dead_codex.id]
+    assert "Codex thread" in warning and "resumes" in warning
+
+    _, targets, warning = mail.send(conn, alice, dead_claude.name, "ping")
+    assert targets == []
+    assert "resume" in warning

@@ -142,3 +142,50 @@ Not yet run, and why:
   profile, and an interactive Codex trust approval, respectively.
 - **Claude Desktop, Codex CLI, Codex Desktop** — no gate has been run on those
   three surfaces yet. The MVP claim covers Claude Code CLI only until they are.
+
+### 2026-09-07 — Codex CLI, offline delivery and sandbox behavior
+
+Harness: codex-cli 0.153.4, macOS 25.5.0. amail installed with
+`uv tool install --reinstall --refresh --from ~/source/agent-mail amail`.
+
+**Gate 8 (resume/lifecycle), Codex — PASS for transport.** `codex exec` created
+thread `01a07d43-9090-7ff2-a521-feefa539f348`, registered by SessionStart as
+`franklin@51`; the process exited and `amail roster` reaped it to `offline`.
+With the `amail-3rp` fix in place, `amail send --to-id 51` reported
+"queued to that Codex thread; it is delivered as a real turn when the thread
+resumes" and wrote the metadata header to `queued_items` in
+`~/.codex/queue_1.sqlite`. Resuming the thread in a pty drained the row, and the
+rollout shows the header arriving as a user turn followed by a **real assistant
+turn with no human input**. Agent 51 revived to `status='working'` on the same
+`session_key` — so `codex resume` preserves the thread id on 0.153.4, contrary to
+what `amail-up1` recorded.
+
+**Receiving-side framing (`amail-8ny`) — holds.** The woken agent did not refuse.
+It said "I'll read the first-party agent mail and report only the sender and
+request" and ran `amail read 3`.
+
+**But the read failed, and the cause is a new P0 (`amail-svb`).** Inside that
+Codex session `amail doctor` reported `identity: claude:58a3f59d-…` and
+`agent: hilbert@48` — the *Claude* session that launched Codex — so
+`amail read 3` answered `no message 3 for hilbert@48`. Codex exports
+`CODEX_THREAD_ID` into every command it runs, but the inherited
+`CLAUDE_CODE_SESSION_ID` was probed first. **End-to-end Codex delivery is
+therefore still not verified**; transport and wake are, action is not.
+
+**Gate 9 (sandbox/permissions), Codex CLI — documented, fix prescribed.**
+Under the default `workspace-write` sandbox:
+
+- `~/.amail` is outside the writable roots: `amail doctor` reports
+  `cannot open /Users/<you>/.amail/mail.db: unable to open database file`.
+  The agent can escalate per command (observed: "May I allow amail to access its
+  local mailbox database…"), but that is an approval prompt on every read and a
+  hard failure in non-interactive `codex exec`. Fix is the narrow allowance
+  `[sandbox_workspace_write] writable_roots = ["~/.amail"]` in
+  `~/.codex/config.toml`, now in docs/install.md (`amail-g31`); passing it with
+  `-c` made every amail command work.
+- **Codex's sandbox also denies exec of `/bin/ps`** (`PermissionError: [Errno 1]
+  Operation not permitted: '/bin/ps'`). Before `amail-qz5`/`amail-mci` this and
+  the `~/.amail` chmod each killed amail with a raw traceback. Both now degrade:
+  verified under `sandbox-exec` profiles denying `file-write-mode` on `~/.amail`
+  and denying `/bin/ps` exec, `whoami`, `roster`, `inbox` and `doctor` all work,
+  nothing is falsely reaped, and `register` refuses with one clear line.

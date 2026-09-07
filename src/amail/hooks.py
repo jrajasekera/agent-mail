@@ -74,5 +74,5 @@ def log_failure(env: Mapping[str, str], exc: BaseException) -> None:
         stamp = datetime.now(timezone.utc).isoformat()
         with open(home / "hook.log", "a") as f:
             f.write(f"{stamp} {type(exc).__name__}: {exc}\n")
-    except OSError:
-        pass
+    except Exception:
+        pass          # the log is best effort; a hook never breaks a session

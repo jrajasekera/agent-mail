@@ -16,7 +16,9 @@ def _pid_running(pid: int) -> bool:
     try:
         os.kill(pid, 0)
         return True
-    except (ProcessLookupError, PermissionError, ValueError):
+    except PermissionError:
+        return True          # EPERM: it exists, we just may not signal it
+    except (ProcessLookupError, ValueError):
         return False
 
 

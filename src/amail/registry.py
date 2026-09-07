@@ -52,8 +52,11 @@ def get(conn: sqlite3.Connection, agent_id: int) -> Agent | None:
 
 
 def detect_branch(cwd: str) -> str | None:
-    out = subprocess.run(["git", "-C", cwd, "branch", "--show-current"],
-                         capture_output=True, text=True)
+    try:
+        out = subprocess.run(["git", "-C", cwd, "branch", "--show-current"],
+                             capture_output=True, text=True)
+    except OSError:
+        return None            # no git, or a sandbox denying its exec
     branch = out.stdout.strip()
     return branch if out.returncode == 0 and branch else None
 
@@ -62,6 +65,11 @@ def register(conn: sqlite3.Connection, env: Mapping[str, str],
              home: Path | None = None,
              expect_harness: str | None = None) -> Agent:
     ident = identity.resolve(env, expect_harness)
+    if ident.pid_start is None:
+        raise RuntimeError(
+            "cannot determine this session's process start time, so its"
+            " liveness could not be tracked; registration happens in the"
+            " SessionStart hook, which runs outside the sandbox")
     reap(conn, home)                       # frees names; outside the write txn
     cwd = env.get("PWD") or os.getcwd()    # slow work stays outside the lock
     branch = detect_branch(cwd)
@@ -154,9 +162,15 @@ def update_status(conn: sqlite3.Connection, agent: Agent,
 
 def reap(conn: sqlite3.Connection, home: Path | None = None) -> int:
     reaped = 0
-    for row in conn.execute(
-            "SELECT id, pid, pid_start FROM agents WHERE status != 'offline'"):
-        if not identity.pid_alive(row["pid"], row["pid_start"]):
+    rows = conn.execute(
+        "SELECT id, pid, pid_start FROM agents WHERE status != 'offline'"
+    ).fetchall()
+    for row in rows:
+        try:
+            alive = identity.pid_alive(row["pid"], row["pid_start"])
+        except identity.InspectionUnavailable:
+            return reaped     # unknown is not dead: never reap what we cannot
+        if not alive:
             conn.execute("UPDATE agents SET status='offline' WHERE id=?",
                          (row["id"],))
             reaped += 1

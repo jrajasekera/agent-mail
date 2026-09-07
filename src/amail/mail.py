@@ -2,6 +2,7 @@
 snapshotted in the send transaction and is the single source of truth."""
 from __future__ import annotations
 
+import json
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -38,11 +39,26 @@ def _validate_body(body: str) -> None:
         raise ValueError(f"body exceeds {MAX_BODY_BYTES // 1024} KiB (64 KiB)")
 
 
+def _is_durable_route(row) -> bool:
+    """A route that survives the endpoint process. `codex queue` writes to
+    Codex's own on-disk queue, so a header pushed to a stopped thread is
+    replayed as real input when that thread resumes; a doorbell file has no
+    reader once the waiter is gone."""
+    try:
+        return json.loads(row["route"]).get("kind") == "codex_queue"
+    except (TypeError, ValueError):
+        return False
+
+
 def _offline_warning(row) -> str | None:
     if row["status"] != "offline":
         return None
+    tail = ("queued to that Codex thread; it is delivered as a real turn when"
+            " the thread resumes" if _is_durable_route(row) else
+            "queued — it surfaces the next time that session runs amail, which"
+            " on resume means when its operator prompts it")
     return (f"{row['name']}@{row['id']} is offline (last seen"
-            f" {row['last_seen']}); queued — delivered if that session resumes")
+            f" {row['last_seen']}); {tail}")
 
 
 def _resolve_audience(conn, sender, recipient, to_id):
@@ -105,7 +121,7 @@ def send(conn: sqlite3.Connection, sender: Agent,
         conn.execute("ROLLBACK")
         raise
     targets = [registry._row_to_agent(r) for r in audience
-               if r["status"] != "offline"]
+               if r["status"] != "offline" or _is_durable_route(r)]
     return msg_id, targets, warning
 
 

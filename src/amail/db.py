@@ -53,11 +53,35 @@ CREATE INDEX IF NOT EXISTS idx_recipients_open
 """
 
 
+class MailboxUnavailable(RuntimeError):
+    """The mailbox database cannot be opened here (permissions, a read-only
+    sandbox, a corrupt file). The caller reports it; it never tracebacks."""
+
+
+class HomeUnusable(MailboxUnavailable):
+    """The mailbox directory cannot be created or made private."""
+
+
 def amail_home(env: Mapping[str, str]) -> Path:
+    """Create ~/.amail (0700) and its subdirectories.
+
+    Only touches the mode of a directory amail itself creates, or one that is
+    demonstrably not private: a sandbox may forbid chmod on a pre-existing
+    directory it did not grant us, and re-asserting a mode that is already
+    correct is what made every command die there."""
     home = Path(env.get("AMAIL_HOME", "~/.amail")).expanduser()
     for d in (home, home / "doorbells", home / "waiters"):
-        d.mkdir(parents=True, exist_ok=True)
-    home.chmod(0o700)
+        try:
+            d.mkdir(parents=True, exist_ok=True)
+        except OSError as e:
+            raise HomeUnusable(
+                f"cannot create {d}: {e.strerror or e}") from e
+    try:
+        if (home.stat().st_mode & 0o777) != 0o700:
+            home.chmod(0o700)
+    except OSError as e:
+        raise HomeUnusable(
+            f"cannot make {home} private (mode 0700): {e.strerror or e}") from e
     return home
 
 
@@ -77,6 +101,15 @@ def _enable_wal(conn: sqlite3.Connection) -> None:
 
 
 def connect(home: Path) -> sqlite3.Connection:
+    try:
+        return _connect(home)
+    except (sqlite3.Error, OSError, RuntimeError) as e:
+        if isinstance(e, MailboxUnavailable):
+            raise
+        raise MailboxUnavailable(f"cannot open {home / 'mail.db'}: {e}") from e
+
+
+def _connect(home: Path) -> sqlite3.Connection:
     conn = sqlite3.connect(home / "mail.db", timeout=5.0)
     conn.isolation_level = None
     conn.row_factory = sqlite3.Row

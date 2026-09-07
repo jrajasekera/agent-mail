@@ -50,6 +50,21 @@ queue write succeeds, and the header is delivered when that thread is
 resumed (verified 2026-09-07). `codex queue` only fails on an unknown
 thread id, not on a stopped one.
 
+Grant Codex write access to the mailbox. Under the default
+`workspace-write` sandbox `~/.amail` is outside the writable roots, so every
+amail command fails with `cannot open ~/.amail/mail.db` and the agent has to
+escalate per command — which is an approval prompt on every mail read, and an
+outright failure in non-interactive `codex exec`. Add it once in
+`~/.codex/config.toml`:
+
+```toml
+[sandbox_workspace_write]
+writable_roots = ["~/.amail"]
+```
+
+Grant that one directory rather than loosening the sandbox. `amail doctor`
+names this fix when it sees the state (`amail-g31`).
+
 Two Codex-specific limitations:
 
 - **No mailbox until the first turn.** Codex has no thread id when the TUI

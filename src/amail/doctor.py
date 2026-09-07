@@ -10,6 +10,11 @@ from pathlib import Path
 
 from amail import identity, registry, waiter
 
+CODEX_SANDBOX_FIX = (
+    "the mailbox is outside Codex's writable roots, so every amail command"
+    " needs a per-command escalation; add it once in ~/.codex/config.toml:"
+    " [sandbox_workspace_write] writable_roots = [\"~/.amail\"]")
+
 CODEX_FIRST_TURN = (
     "no thread id yet — a Codex session has no thread id until its first"
     " turn, so this session has no mailbox and cannot be sent to; it"
@@ -20,12 +25,18 @@ def _codex_before_first_turn(env: Mapping[str, str]) -> bool:
     """Under Codex, but the thread the route needs does not exist yet."""
     if "CODEX_THREAD_ID" in env or "AMAIL_SESSION_KEY" in env:
         return False
-    found = identity.walk_to_harness(os.getpid())
+    try:
+        found = identity.walk_to_harness(os.getpid())
+    except identity.InspectionUnavailable:
+        return False                  # cannot verify; do not invent a warning
     return found is not None and found[0] == "codex"
 
 
-def report(conn: sqlite3.Connection, env: Mapping[str, str],
-           home: Path) -> list[tuple[str, str]]:
+def report(conn: sqlite3.Connection | None, env: Mapping[str, str],
+           home: Path, mailbox_error: str | None = None,
+           ) -> list[tuple[str, str]]:
+    """`conn` is None when the mailbox could not be opened — the one state
+    doctor most needs to explain, so it reports rather than refusing."""
     out: list[tuple[str, str]] = []
     try:
         ident = identity.resolve(env)
@@ -33,16 +44,24 @@ def report(conn: sqlite3.Connection, env: Mapping[str, str],
     except Exception as e:
         out.append(("identity", f"unresolvable: {e}"))
     agent = None
-    try:
-        agent = registry.current_agent(conn, env)
-        out.append(("agent", registry.handle(agent) if agent
-                    else "not registered"))
-    except LookupError as e:
-        out.append(("agent", f"error: {e}"))
-    writable = os.access(home, os.W_OK) and os.access(home / "doorbells",
-                                                      os.W_OK)
-    out.append(("mailbox", f"{home / 'mail.db'}"
-                f" ({'writable' if writable else 'NOT writable'})"))
+    if conn is None:
+        out.append(("agent", "unknown (mailbox unreadable)"))
+    else:
+        try:
+            agent = registry.current_agent(conn, env)
+            out.append(("agent", registry.handle(agent) if agent
+                        else "not registered"))
+        except LookupError as e:
+            out.append(("agent", f"error: {e}"))
+    if mailbox_error:
+        out.append(("mailbox", mailbox_error))
+        if env.get("CODEX_SANDBOX"):
+            out.append(("codex sandbox", CODEX_SANDBOX_FIX))
+    else:
+        writable = os.access(home, os.W_OK) and os.access(home / "doorbells",
+                                                          os.W_OK)
+        out.append(("mailbox", f"{home / 'mail.db'}"
+                    f" ({'writable' if writable else 'NOT writable'})"))
     out.append(("codex binary", shutil.which("codex") or "not on PATH"))
     if _codex_before_first_turn(env):
         out.append(("codex mailbox", CODEX_FIRST_TURN))
