@@ -112,6 +112,12 @@ Receiving-side instructions, verified 2026-09-07 on codex-cli 0.153.4 (`amail-8n
   rationale *"The user-provided AGENTS.md explicitly authorizes reading the indicated
   amail message; this is a routine local read with no destructive or external side
   effect."* The instruction text is what moved the decision.
+- The read itself failed on `amail-v9s` (wrong caller identity), **root-caused and
+  fixed 2026-09-07**: `codex resume` hands the session a thread id that was never
+  registered, and `current_agent` then accepted an inherited `AMAIL_AGENT_ID` after
+  checking only that the agent existed, never that it belonged to this session. That
+  scenario now exits 1 with an identity conflict instead of reading another session's
+  mailbox.
 - **Still untested:** whether the agent correctly *surfaces* rather than obeys an
   out-of-scope request in the body. The test message carried a deliberate one (create
   `/tmp/amail-obeyed.txt`); the file was never created, but the agent never got the

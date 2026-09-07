@@ -107,11 +107,13 @@ def register(conn: sqlite3.Connection, env: Mapping[str, str],
 
 def current_agent(conn: sqlite3.Connection, env: Mapping[str, str],
                   expect_harness: str | None = None) -> Agent | None:
+    ident = None
     native_row = None
     try:
+        ident = identity.resolve(env, expect_harness)
         native_row = conn.execute(
             "SELECT * FROM agents WHERE session_key = ?",
-            (identity.resolve(env, expect_harness).session_key,)).fetchone()
+            (ident.session_key,)).fetchone()
     except RuntimeError:
         pass
     if "AMAIL_AGENT_ID" in env:
@@ -124,6 +126,16 @@ def current_agent(conn: sqlite3.Connection, env: Mapping[str, str],
             raise LookupError(
                 f"identity conflict: AMAIL_AGENT_ID={pinned} but this"
                 f" session's mailbox is agent {native_row['id']}")
+        # No mailbox for this session yet: a resumed Codex thread gets a new
+        # id. The pin is then the ONLY identity claim, so it has to be checked
+        # against who we actually are -- an inherited pin from the session
+        # that launched us names a real agent and would otherwise win.
+        if (native_row is None and ident is not None and ident.native
+                and row["session_key"] != ident.session_key):
+            raise LookupError(
+                f"identity conflict: AMAIL_AGENT_ID={pinned} is a"
+                f" {row['harness']} mailbox but this session resolves to"
+                f" {ident.harness}; scrub the inherited variable or register")
         return _row_to_agent(row)
     return _row_to_agent(native_row) if native_row else None
 

@@ -70,6 +70,17 @@ def test_current_agent_pinned_and_conflicting(conn):
         registry.current_agent(conn, {"AMAIL_AGENT_ID": str(b.id), **ENV1})
 
 
+def test_pin_is_rejected_when_it_belongs_to_another_session(conn):
+    """A resumed Codex session gets a thread id with no mailbox. If it also
+    inherited AMAIL_AGENT_ID from the session that launched it, the pin must
+    not silently win — that is how a Codex session reads a Claude mailbox."""
+    a = registry.register(conn, ENV1)                    # a claude mailbox
+    resumed = {"CODEX_THREAD_ID": "th-never-registered", "AMAIL_PID": "22",
+               "AMAIL_PID_START": "t2", "AMAIL_AGENT_ID": str(a.id)}
+    with pytest.raises(LookupError, match="conflict"):
+        registry.current_agent(conn, resumed)
+
+
 def test_current_agent_finds_offline_mailbox(conn):
     a = registry.register(conn, ENV1)
     conn.execute("UPDATE agents SET status='offline' WHERE id=?", (a.id,))

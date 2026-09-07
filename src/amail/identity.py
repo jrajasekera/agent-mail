@@ -21,6 +21,9 @@ class SessionIdentity:
     session_key: str
     pid: int
     pid_start: str
+    native: bool = True
+    """False when the harness was inferred from pid ancestry rather than
+    named by the session itself. A guess is not grounds to reject a pin."""
 
 
 def pid_start(pid: int) -> str | None:
@@ -52,11 +55,12 @@ def walk_to_harness(pid: int) -> tuple[str, int] | None:
 
 
 def _finish(env: Mapping[str, str], harness: str, native_key: str,
-            pid: int) -> SessionIdentity:
+            pid: int, native: bool = True) -> SessionIdentity:
     start = env.get("AMAIL_PID_START") or pid_start(pid)
     if start is None:
         raise RuntimeError(f"cannot determine start time of pid {pid}")
-    return SessionIdentity(harness, f"{harness}:{native_key}", pid, start)
+    return SessionIdentity(harness, f"{harness}:{native_key}", pid, start,
+                           native)
 
 
 def _fallback_pid() -> int:
@@ -126,7 +130,7 @@ def resolve(env: Mapping[str, str],
             harness, pid = found
         else:
             harness, pid = "shell", os.getppid()
-        ident = _finish(env, harness, f"pid:{pid}", pid)
+        ident = _finish(env, harness, f"pid:{pid}", pid, native=False)
     if expect_harness and ident.harness != expect_harness:
         raise IdentityConflict(                # never log env contents here
             f"invoked as {expect_harness} but this environment resolves to"
