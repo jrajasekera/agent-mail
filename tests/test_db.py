@@ -1,0 +1,42 @@
+import pytest
+
+from amail import db
+
+
+def test_amail_home_creates_private_dirs(tmp_path):
+    home = db.amail_home({"AMAIL_HOME": str(tmp_path / "h")})
+    assert (home / "doorbells").is_dir()
+    assert (home / "waiters").is_dir()
+    assert (home.stat().st_mode & 0o777) == 0o700
+
+
+def test_connect_pragmas_and_schema(home):
+    conn = db.connect(home)
+    assert conn.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
+    assert conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
+    assert conn.isolation_level is None
+    tables = {r[0] for r in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'")}
+    assert {"meta", "agents", "messages", "message_recipients"} <= tables
+    db.connect(home).close()  # idempotent re-connect
+
+
+def test_newer_schema_version_is_refused(home):
+    conn = db.connect(home)
+    conn.execute("UPDATE meta SET value = ? WHERE key = 'schema_version'",
+                 (str(db.SCHEMA_VERSION + 1),))
+    conn.close()
+    with pytest.raises(RuntimeError, match="schema"):
+        db.connect(home)
+
+
+def test_overlapping_write_transactions_conflict_cleanly(home):
+    c1, c2 = db.connect(home), db.connect(home)
+    c2.execute("PRAGMA busy_timeout=100")
+    c1.execute("BEGIN IMMEDIATE")
+    c1.execute("INSERT INTO meta VALUES ('x', '1')")
+    with pytest.raises(Exception):  # sqlite3.OperationalError: busy
+        c2.execute("BEGIN IMMEDIATE")
+    c1.execute("COMMIT")
+    c2.execute("BEGIN IMMEDIATE")   # now succeeds
+    c2.execute("COMMIT")
