@@ -1,9 +1,9 @@
 ---
 name: beads
-description: Use when working in a repository that uses bd or Beads for durable project task tracking, issue dependencies, blocker management, multi-session handoff, or shared work memory. Trigger when the user asks to find ready work, claim or close tasks, create follow-up work, inspect blockers, recover project context, or choose between local planning and persistent project tracking.
+description: Use when working in this repository's Beads Rust tracker for durable tasks, dependencies, blocker management, multi-session handoff, or shared work state.
 ---
 
-# Beads
+# Beads Rust
 
 Use Beads as the shared project task system. Local plans, scratch files, and personal memories are useful, but they are not the durable source of truth for project work.
 
@@ -12,51 +12,48 @@ Use Beads as the shared project task system. Local plans, scratch files, and per
 Run:
 
 ```bash
-bd prime
+br info --json
 ```
 
-If that prints nothing, check whether the repository has an active Beads workspace:
-
-```bash
-bd where
-```
+Confirm that the resolved workspace and database belong to this checkout before
+mutating tracker state.
 
 ## Preferred Route
 
-Use the `bd` CLI when shell access is available. It is the most compact and direct Beads interface.
+Use the `br` CLI when shell access is available.
 
 ## Core CLI Workflow
 
 1. Find work:
 
 ```bash
-bd ready
-bd list --status=open
-bd list --status=in_progress
+br ready --json
+br list --status open --json
+br list --status in_progress --json
 ```
 
 2. Inspect before editing:
 
 ```bash
-bd show <id>
+br show <id> --json
 ```
 
 3. Claim work atomically:
 
 ```bash
-bd update <id> --claim
+br update <id> --claim --json
 ```
 
 4. Create durable follow-up work when implementation reveals new tasks:
 
 ```bash
-bd create "Short title" --description="Why this exists and what needs to be done" --type=task --priority=2
+br create "Short title" --description "Why this exists and what needs to be done" --type task --priority 2 --json
 ```
 
 5. Close completed work:
 
 ```bash
-bd close <id> --reason="Completed"
+br close <id> --reason "Completed" --json
 ```
 
 ## What Belongs In Beads
@@ -74,7 +71,10 @@ Use agent-local planning tools only for the current turn's execution checklist. 
 ## Rules
 
 - Do not create markdown TODO files as the source of truth when Beads is available.
-- Do not use `bd edit`; it opens an interactive editor. Use `bd update` flags instead.
-- Prefer `--json` when parsing `bd` output programmatically.
-- If hooks are installed, `bd prime` may already be injected. Run it manually when context is missing.
+- Do not use an interactive editor for tracker mutations; use `br update` flags.
+- Prefer `--json` for programmatic output.
+- Use `parent-child` for hierarchy and `blocks` only for real execution prerequisites.
+- Open children may make their parent epic appear blocked as a hierarchy rollup; prefer ready leaf tasks.
+- Successful mutations auto-flush JSONL, but `br` never stages, commits, pulls, or pushes Git changes.
+- Run `br sync --status --json` before handoff and `br sync --flush-only` as an explicit final export check.
 - Do not auto-close or mutate tasks unless the work is actually complete.
