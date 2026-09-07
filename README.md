@@ -18,9 +18,10 @@ no threads, no locking.
 ## Status
 
 Implemented and installed. Live-harness verification so far covers **Claude Code CLI
-only** — identity, idle delivery, the stop backstop, and session resume all pass there.
-The four-surface MVP claim (Claude Code CLI/Desktop, Codex CLI/Desktop) waits on the
-remaining gates in [docs/acceptance-gates.md](docs/acceptance-gates.md); Pi is deferred.
+only** — identity, hook registration, idle delivery, the stop backstop, and session
+resume all pass there. The four-surface MVP claim (Claude Code CLI/Desktop, Codex
+CLI/Desktop) waits on the remaining gates in
+[docs/acceptance-gates.md](docs/acceptance-gates.md); Pi is deferred.
 
 One open risk, tracked as `amail-a1w`: on codex-cli 0.153.4, `codex queue` reports
 `No active session found` for an unknown thread, which may mean it needs a *running*

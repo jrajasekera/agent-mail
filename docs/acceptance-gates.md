@@ -35,10 +35,17 @@ configs are backed up as `settings.json.bak-amail` / `hooks.json.bak-amail`.
 | 8 | Resume/lifecycle | shell identity | **PASS.** A session was registered, its process died, `amail roster` reaped it to `offline`; a send reported the offline warning with its last-seen time and still committed; re-registering the same `AMAIL_SESSION_KEY` revived the same id (`volta@2`) with the queued mail in `amail inbox`. |
 | 10 | Dock-launch PATH | wrapper only | **PASS (simulated).** The wrapper was invoked with `env -u PATH`; it resolved `~/.local/bin/amail` and registered the session. A real Dock-launched Claude Desktop / ChatGPT.app run still needs checking. |
 
+### 2026-09-07 — Claude Code CLI (fresh interactive session, this machine)
+
+Harness: Claude Code CLI 2.1.263, real interactive session started *after* the
+2026-09-06 hook wiring. amail 0.1.0 (`uv tool install`).
+
+| # | Gate | Surface | Result |
+|---|---|---|---|
+| 2 | Hook registration | Claude CLI | **PASS.** A fresh session ran no `amail register`; `amail whoami` immediately returned `avogadro@6 claude working`, and `env \| grep AMAIL_AGENT_ID` showed `AMAIL_AGENT_ID=6`. The `agents` row confirms the hook did it: `session_key = claude:dbcd7e5c-…` (this session's id) with `created_at == last_seen == 2026-09-07T03:19:53Z` — created at session start, never touched by a manual register. Pinning works via `hooks.py` appending `export AMAIL_AGENT_ID=<id>` to `$CLAUDE_ENV_FILE`; that variable is set only for the hook process, so the pin is observable in the session but not re-derivable from the shell. `~/.amail/hook.log` does not exist, i.e. the hook logged no failures. The SessionStart matcher is `''` (all sources), so this fired on a `clear`-sourced start; `startup`- and `resume`-sourced starts use the same hook entry but were not separately observed. |
+
 Not yet run, and why:
 
-- **Gate 2 (hook registration)** — needs a *fresh* session started after the hooks
-  were wired; this session predates them.
 - **Gate 4 (Codex idle delivery)** — needs a live interactive Codex session, and
   queueing into one would inject a message into the operator's own session.
   Partial finding, worth noting: `codex queue --thread <unknown> --message …`
