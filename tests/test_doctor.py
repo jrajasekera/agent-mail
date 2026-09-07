@@ -72,3 +72,25 @@ def test_doctor_still_reports_when_the_mailbox_cannot_be_opened(home, capsys,
     assert "unable to open database file" in out
     assert "writable_roots" in out          # names the actual fix
     assert "Traceback" not in out
+
+
+def test_disabled_background_tasks_is_explained(home, conn):
+    """amail-87p gate 7: with background tasks off the Bash tool loses its
+    run_in_background parameter, so `amail wait` can only run in the
+    foreground and blocks the turn. Doctor is where that is explained."""
+    env = {"AMAIL_HOME": str(home), "CLAUDE_CODE_SESSION_ID": "s-bg",
+           "CLAUDE_PID": str(os.getpid()),
+           "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS": "1"}
+    registry.register(conn, env)
+    checks = dict(doctor.report(conn, env, home))
+    note = checks["background tasks"]
+    assert "amail wait" in note and "Stop hook" in note
+
+
+def test_background_tasks_note_is_absent_when_they_are_enabled(home, conn):
+    env = {"AMAIL_HOME": str(home), "CLAUDE_CODE_SESSION_ID": "s-bg2",
+           "CLAUDE_PID": str(os.getpid())}
+    registry.register(conn, env)
+    assert "background tasks" not in dict(doctor.report(conn, env, home))
+    env["CLAUDE_CODE_DISABLE_BACKGROUND_TASKS"] = "0"
+    assert "background tasks" not in dict(doctor.report(conn, env, home))

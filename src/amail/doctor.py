@@ -15,10 +15,21 @@ CODEX_SANDBOX_FIX = (
     " needs a per-command escalation; add it once in ~/.codex/config.toml:"
     " [sandbox_workspace_write] writable_roots = [\"~/.amail\"]")
 
+BACKGROUND_TASKS_OFF = (
+    "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS is set, so the Bash tool has no"
+    " run_in_background parameter and `amail wait` can only run in the"
+    " foreground, blocking the turn for its whole timeout; mail still"
+    " arrives, one turn later, through the Stop hook")
+
 CODEX_FIRST_TURN = (
     "no thread id yet — a Codex session has no thread id until its first"
     " turn, so this session has no mailbox and cannot be sent to; it"
     " registers automatically on the first turn")
+
+
+def _background_tasks_disabled(env: Mapping[str, str]) -> bool:
+    return env.get("CLAUDE_CODE_DISABLE_BACKGROUND_TASKS", "").strip().lower(
+    ) not in ("", "0", "false")
 
 
 def _codex_before_first_turn(env: Mapping[str, str]) -> bool:
@@ -78,6 +89,8 @@ def report(conn: sqlite3.Connection | None, env: Mapping[str, str],
         out.append(("watcher", armed))
     else:
         out.append(("watcher", "n/a (not registered)"))
+    if _background_tasks_disabled(env):
+        out.append(("background tasks", BACKGROUND_TASKS_OFF))
     out.append(("hook trust", "cannot verify here"))
     out.append(("codex idle wake", "cannot verify here"))
     out.append(("sandbox write access from harness", "cannot verify here"))
