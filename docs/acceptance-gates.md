@@ -87,7 +87,8 @@ Offline Codex delivery, verified 2026-09-07 on codex-cli 0.153.4 (`amail-a1w`):
   across a stopped process.** Note this verifies the mechanism, not the shipped path:
   `mail.send` filters offline agents out of the push list (`mail.py:107`), so
   `amail send` to an offline Codex session queues nothing and relies on the
-  SessionStart backstop.
+  SessionStart backstop — which, verified 2026-09-07, surfaces nothing until the
+  operator prompts the resumed session (`amail-3rp`).
 - The exit-1 failure is *unknown thread id* only: `codex queue --thread
   00000000-0000-0000-0000-000000000000` returns `no rollout found for thread id …`
   (code -32603). "No live process" is not a failure condition.
